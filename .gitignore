@@ -3,6 +3,7 @@ node_modules/
 coverage/
 dist/
 *.tgz
+.release-artifacts/
 tmp/
 
 # Local planning and agent runtime files.

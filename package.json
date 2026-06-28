@@ -1,6 +1,6 @@
 {
   "name": "@sanbaiw/web-source-bundler",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fetch, preserve, and bundle web sources into Markdown entries with local references and assets.",
   "type": "module",
   "repository": {
@@ -12,6 +12,9 @@
   },
   "homepage": "https://github.com/sanbaiw/web-source-bundler#readme",
   "packageManager": "bun@1.3.14",
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "web-source-bundler": "dist/cli.js"
   },
@@ -19,6 +22,7 @@
   "scripts": {
     "build": "bun build ./src/cli.ts --target=node --outfile=dist/cli.js --external sharp && chmod +x dist/cli.js",
     "dev": "bun ./src/cli.ts",
+    "prepack": "bun run build",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint . && knip",
     "format": "biome check . --write --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
