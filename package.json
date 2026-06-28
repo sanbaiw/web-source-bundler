@@ -13,7 +13,7 @@
   "homepage": "https://github.com/sanbaiw/web-source-bundler#readme",
   "packageManager": "bun@1.3.14",
   "bin": {
-    "web-source-bundler": "./dist/cli.js"
+    "web-source-bundler": "dist/cli.js"
   },
   "files": [
     "dist",
