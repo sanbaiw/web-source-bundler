@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "web-source-bundler",
+      "name": "@sanbaiw/web-source-bundler",
       "dependencies": {
         "sharp": "^0.33.0",
         "turndown": "^7.2.0",

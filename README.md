@@ -7,8 +7,8 @@ The tool is inspired by agent web-fetch/web-search pipelines: keep the source pr
 ## Usage
 
 ```bash
-npx web-source-bundler https://example.com ./raw/example
-pnpm dlx web-source-bundler https://example.com ./raw/example
+npx @sanbaiw/web-source-bundler https://example.com ./raw/example
+pnpm dlx @sanbaiw/web-source-bundler https://example.com ./raw/example
 ```
 
 Options:
@@ -88,4 +88,5 @@ bun run build
 bun run test
 ```
 
-The published package exposes one CLI bin: `web-source-bundler`.
+The published package is `@sanbaiw/web-source-bundler` and exposes one CLI bin:
+`web-source-bundler`.

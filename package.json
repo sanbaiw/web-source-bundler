@@ -1,5 +1,5 @@
 {
-  "name": "web-source-bundler",
+  "name": "@sanbaiw/web-source-bundler",
   "version": "0.1.0",
   "description": "Fetch, preserve, and bundle web sources into Markdown entries with local references and assets.",
   "type": "module",
