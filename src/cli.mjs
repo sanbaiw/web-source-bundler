@@ -36,17 +36,25 @@ const BINARY_TIMEOUT_MS = 20000;
 const MIN_ASSET_BYTES = 512; // tracking pixels / micro-sprites are tens of bytes
 const MIN_ASSET_DIMENSION = 24; // smaller side this tiny => rule/badge/pixel (e.g. 109x20 shield)
 const MAX_TINY_ASSET_DIMENSION = 64; // larger side this small => favicon/avatar/sprite (e.g. 48x48)
+const CLI_VERSION = "0.1.0";
 
 function usage(exitCode = 1) {
-  console.error(`Usage:
-  web-source-bundler --bundle [options] <url> <output-dir>
+  const text = `Usage:
+  web-source-bundler [options] <url> <output-dir>
 
 Options:
   --no-svg2png   Keep SVG images as-is instead of converting to PNG (default: convert)
+  -h, --help     Show this help message
+  --version      Print the CLI version
 
-Bundle mode fetches and preserves a source URL, writes a readable Markdown
+The command fetches and preserves a source URL, writes a readable Markdown
 entry, downloads each direct reference into the references directory, downloads
-page images, rewrites local cross-links, and writes references/references.json.`);
+page images, rewrites local cross-links, and writes references/references.json.`;
+  if (exitCode === 0) {
+    console.log(text);
+  } else {
+    console.error(text);
+  }
   process.exit(exitCode);
 }
 
@@ -56,19 +64,29 @@ function parseArgs(argv) {
     usage(0);
   }
 
-  const bundleIndex = args.indexOf("--bundle");
-  if (bundleIndex === -1) {
-    usage();
+  if (args.includes("--version")) {
+    console.log(CLI_VERSION);
+    process.exit(0);
   }
 
-  const svg2png = !args.includes("--no-svg2png");
-  const positional = args.filter((a) => a !== "--bundle" && a !== "--no-svg2png");
+  let svg2png = true;
+  const positional = [];
+  for (const arg of args) {
+    if (arg === "--no-svg2png") {
+      svg2png = false;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      usage();
+    }
+    positional.push(arg);
+  }
+
   if (positional.length !== 2) {
     usage();
   }
 
   return {
-    mode: "bundle",
     url: positional[0],
     outDir: positional[1],
     svg2png,
@@ -141,10 +159,6 @@ function normalizeUrl(baseUrl, href) {
   } catch {
     return null;
   }
-}
-
-function unique(values) {
-  return [...new Set(values.filter(Boolean))];
 }
 
 function toPosix(filePath) {
@@ -826,17 +840,43 @@ function stripLeadingBodyH1(html) {
 }
 
 function extractLinks(html, baseUrl) {
+  return extractLinkEntries(html, baseUrl).map((entry) => entry.url);
+}
+
+function readableLinkLabel(html) {
+  const label = stripTags(html);
+  if (!label || isChromeName(sanitizeBaseName(label, ""))) {
+    return null;
+  }
+  return label;
+}
+
+function extractLinkEntries(html, baseUrl) {
   const refs = [];
+  const byUrl = new Map();
   const linkRe = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
 
   for (const match of html.matchAll(linkRe)) {
     const url = normalizeUrl(baseUrl, match[1]);
-    if (url) {
-      refs.push(url);
+    if (!url) {
+      continue;
     }
+
+    const label = readableLinkLabel(match[2]);
+    const existing = byUrl.get(url);
+    if (existing) {
+      if (!existing.label && label) {
+        existing.label = label;
+      }
+      continue;
+    }
+
+    const entry = label ? { url, label } : { url };
+    byUrl.set(url, entry);
+    refs.push(entry);
   }
 
-  return unique(refs);
+  return refs;
 }
 
 function extractImages(html, baseUrl) {
@@ -921,10 +961,226 @@ function parsePage(url, html) {
     html,
     mainHtml,
     articleHtml,
+    directReferenceLinks: extractLinkEntries(articleHtml, url),
     directReferences: extractLinks(articleHtml, url),
     allLinks: extractLinks(mainHtml, url),
     images: extractImages(articleHtml, url),
   };
+}
+
+function normalizedHostname(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, "").toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isIpHostname(hostname) {
+  return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname) || hostname.includes(":");
+}
+
+function conservativeRegistrableDomain(hostname) {
+  const host = hostname.replace(/\.$/, "");
+  if (!host || isIpHostname(host)) {
+    return host;
+  }
+  const parts = host.split(".").filter(Boolean);
+  if (parts.length <= 2) {
+    return host;
+  }
+  return parts.slice(-2).join(".");
+}
+
+function isSameSiteUrl(leftUrl, rightUrl) {
+  const leftHost = normalizedHostname(leftUrl);
+  const rightHost = normalizedHostname(rightUrl);
+  if (!leftHost || !rightHost) {
+    return true;
+  }
+  if (isIpHostname(leftHost) || isIpHostname(rightHost)) {
+    return leftHost === rightHost;
+  }
+  return conservativeRegistrableDomain(leftHost) === conservativeRegistrableDomain(rightHost);
+}
+
+function isHomepageLikeUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.replace(/\/+$/g, "") || "/";
+    return pathname === "/" || pathname === "/home";
+  } catch {
+    return false;
+  }
+}
+
+const KNOWN_PRODUCT_HOMEPAGE_HOSTS = new Set([
+  "bolt.new",
+  "descript.com",
+  "qodo.ai",
+  "braintrust.dev",
+  "claude.ai",
+]);
+
+const SOURCE_LIKE_HOSTS = [
+  /(^|\.)github\.com$/i,
+  /(^|\.)githubusercontent\.com$/i,
+  /(^|\.)arxiv\.org$/i,
+  /(^|\.)wikipedia\.org$/i,
+];
+
+const SOURCE_LIKE_SUBDOMAINS = new Set(["docs", "help", "developer", "developers", "api"]);
+const SOURCE_LIKE_PATH_PREFIXES = [
+  "/docs",
+  "/documentation",
+  "/guide",
+  "/guides",
+  "/api",
+  "/developer",
+  "/developers",
+  "/blog",
+  "/engineering",
+  "/research",
+  "/paper",
+  "/papers",
+  "/article",
+  "/articles",
+  "/case-studies",
+  "/customers",
+];
+const SOURCE_LIKE_EXTENSIONS = new Set([
+  ".md",
+  ".markdown",
+  ".txt",
+  ".json",
+  ".xml",
+  ".csv",
+  ".yaml",
+  ".yml",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".css",
+  ".ts",
+  ".tsx",
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".avif",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".docx",
+  ".pptx",
+  ".xlsx",
+]);
+
+function normalizedPathname(url) {
+  try {
+    return new URL(url).pathname.replace(/\/+$/g, "") || "/";
+  } catch {
+    return "/";
+  }
+}
+
+function isSourceLikeReferenceUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return true;
+  }
+
+  const host = normalizedHostname(url);
+  if (SOURCE_LIKE_HOSTS.some((pattern) => pattern.test(host))) {
+    return true;
+  }
+
+  const firstLabel = host.split(".")[0];
+  if (SOURCE_LIKE_SUBDOMAINS.has(firstLabel)) {
+    return true;
+  }
+
+  const pathname = normalizedPathname(url).toLowerCase();
+  if (SOURCE_LIKE_PATH_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+    return true;
+  }
+
+  const ext = path.extname(parsed.pathname).toLowerCase();
+  return SOURCE_LIKE_EXTENSIONS.has(ext);
+}
+
+function isKnownProductHomepageOrLandingUrl(url) {
+  const host = normalizedHostname(url);
+  const pathname = normalizedPathname(url).toLowerCase();
+
+  if (KNOWN_PRODUCT_HOMEPAGE_HOSTS.has(host) && isHomepageLikeUrl(url)) {
+    return true;
+  }
+
+  return (
+    (host === "anthropic.com" && pathname === "/claude-code")
+    || (host === "claude.com" && pathname === "/product/claude-code")
+    || (host === "claude.ai" && pathname === "/code")
+  );
+}
+
+function shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl }) {
+  if (isSameSiteUrl(mainUrl, referenceUrl)) {
+    return null;
+  }
+  if (isSourceLikeReferenceUrl(referenceUrl)) {
+    return null;
+  }
+  if (!isKnownProductHomepageOrLandingUrl(referenceUrl)) {
+    return null;
+  }
+
+  return {
+    kind: "skipped",
+    skipped_reason: "low_signal_marketing_reference",
+  };
+}
+
+function marketingSignalsForHtml(page) {
+  const html = page.mainHtml || page.articleHtml || "";
+  const text = stripTags(html).toLowerCase();
+  const signals = new Set();
+
+  if (/\b(?:get started|start for free|try for free|sign up|signup|book a demo|contact sales)\b/i.test(text)) {
+    signals.add("cta");
+  }
+  if (/\b(?:trusted by|customers|customer stories|testimonials?|logo wall)\b/i.test(text)) {
+    signals.add("social-proof");
+  }
+  if (/\bpricing\b|\bfree\b[\s\S]{0,80}\b(?:pro|enterprise)\b/i.test(text)) {
+    signals.add("pricing");
+  }
+  if (/<form\b/i.test(html) || /\bnewsletter\b/i.test(text)) {
+    signals.add("form");
+  }
+
+  return signals;
+}
+
+function isLowSignalMarketingReference({ mainUrl, referenceUrl, page }) {
+  if (isSameSiteUrl(mainUrl, referenceUrl)) {
+    return false;
+  }
+  if (isSourceLikeReferenceUrl(referenceUrl)) {
+    return false;
+  }
+  if (!isHomepageLikeUrl(referenceUrl) && !isKnownProductHomepageOrLandingUrl(referenceUrl)) {
+    return false;
+  }
+  return marketingSignalsForHtml(page).size >= 2;
 }
 
 function pageAssetDir(relativeMarkdownPath) {
@@ -1225,12 +1481,10 @@ function buildReferenceSection(page, pageInfoMap, linkMap) {
     const label = info?.title || ref;
     if (localTarget) {
       lines.push(`- [${label}](${localTarget})`);
-    } else {
-      lines.push(`- [${label}](${ref})`);
     }
   }
 
-  return lines;
+  return lines.length > 2 ? lines : [];
 }
 
 function buildProvenanceLines(source) {
@@ -1565,6 +1819,7 @@ function createTextPage(source, classification, relativePath) {
     html: null,
     mainHtml: "",
     articleHtml: "",
+    directReferenceLinks: [],
     directReferences: [],
     allLinks: [],
     images: [],
@@ -1585,6 +1840,7 @@ function createAssetPage(source, classification, relativePath, assetPath, output
     html: null,
     mainHtml: "",
     articleHtml: "",
+    directReferenceLinks: [],
     directReferences: [],
     allLinks: [],
     images: [],
@@ -1660,6 +1916,29 @@ function referenceManifestEntry(page) {
   return entry;
 }
 
+function skippedReferenceManifestEntry({ link, source = null, title = null }) {
+  const entry = {
+    original_url: link.url,
+    kind: "skipped",
+    skipped_reason: "low_signal_marketing_reference",
+  };
+
+  if (link.label) {
+    entry.label = link.label;
+  }
+  if (title) {
+    entry.title = title;
+  }
+  if (source?.finalUrl && source.finalUrl !== link.url) {
+    entry.final_url = source.finalUrl;
+  }
+  if (source?.contentType) {
+    entry.content_type = source.contentType;
+  }
+
+  return entry;
+}
+
 async function buildBundle(url, outDir, { svg2png = true } = {}) {
   const outputDir = path.resolve(outDir);
   if (existsSync(outputDir)) {
@@ -1678,8 +1957,19 @@ async function buildBundle(url, outDir, { svg2png = true } = {}) {
 
   const usedRefNames = new Set();
   const referencePages = [];
+  const skippedReferences = new Map();
   let referenceIndex = 1;
-  for (const refUrl of mainPage.directReferences || []) {
+  for (const link of mainPage.directReferenceLinks || []) {
+    const refUrl = link.url;
+    if (shouldSkipReferenceBeforeFetch({ mainUrl: mainPage.url, referenceUrl: refUrl })) {
+      console.error(`Skipping low-signal reference ${refUrl} ...`);
+      if (!skippedReferences.has(refUrl)) {
+        skippedReferences.set(refUrl, skippedReferenceManifestEntry({ link }));
+      }
+      referenceIndex += 1;
+      continue;
+    }
+
     console.error(`Fetching reference source ${refUrl} ...`);
 
     try {
@@ -1696,6 +1986,22 @@ async function buildBundle(url, outDir, { svg2png = true } = {}) {
         }
         return fallbackTitleFromUrl(source.finalUrl);
       })();
+      if (classification.kind === "html") {
+        const html = readFileSync(source.preservedPath, "utf8");
+        const page = {
+          ...parsePage(source.finalUrl, html),
+          source,
+          classification,
+        };
+        if (isLowSignalMarketingReference({ mainUrl: mainPage.url, referenceUrl: source.finalUrl, page })) {
+          console.error(`Skipping low-signal reference ${refUrl} ...`);
+          if (!skippedReferences.has(refUrl)) {
+            skippedReferences.set(refUrl, skippedReferenceManifestEntry({ link, source, title }));
+          }
+          referenceIndex += 1;
+          continue;
+        }
+      }
       const relativePath = plannedReferencePath(outputDir, title, usedRefNames);
       const assetPath =
         classification.kind === "asset"
@@ -1712,6 +2018,7 @@ async function buildBundle(url, outDir, { svg2png = true } = {}) {
         html: null,
         mainHtml: "",
         articleHtml: "",
+        directReferenceLinks: [],
         directReferences: [],
         allLinks: [],
         images: [],
@@ -1778,6 +2085,9 @@ async function buildBundle(url, outDir, { svg2png = true } = {}) {
   for (const page of referencePages) {
     manifest[page.relativePath] = referenceManifestEntry(page);
   }
+  if (skippedReferences.size > 0) {
+    manifest.skipped = Object.fromEntries(skippedReferences);
+  }
 
   const manifestPath = path.join(outputDir, "references", "references.json");
   ensureDir(path.dirname(manifestPath));
@@ -1793,9 +2103,7 @@ async function buildBundle(url, outDir, { svg2png = true } = {}) {
 
 async function main() {
   const args = parseArgs(process.argv);
-  if (args.mode === "bundle") {
-    await buildBundle(args.url, args.outDir, { svg2png: args.svg2png });
-  }
+  await buildBundle(args.url, args.outDir, { svg2png: args.svg2png });
 }
 
 function isCliEntrypoint() {
@@ -1826,6 +2134,8 @@ export {
   renderAssetSourceEntry,
   renderTextSourceEntry,
   shouldExcludeImage,
+  isLowSignalMarketingReference,
+  shouldSkipReferenceBeforeFetch,
   SITE_RULES,
   stripGenericChrome,
   stripMdxComponents,

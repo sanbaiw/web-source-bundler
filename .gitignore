@@ -4,3 +4,10 @@ coverage/
 dist/
 *.tgz
 tmp/
+
+# Local planning and agent runtime files.
+.scratch/
+.worktrees/
+AGENTS.md
+RTK.md
+CONTEXT.md

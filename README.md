@@ -7,19 +7,20 @@ The tool is inspired by agent web-fetch/web-search pipelines: keep the source pr
 ## Usage
 
 ```bash
-npx web-source-bundler --bundle https://example.com ./raw/example
-pnpm dlx web-source-bundler --bundle https://example.com ./raw/example
+npx web-source-bundler https://example.com ./raw/example
+pnpm dlx web-source-bundler https://example.com ./raw/example
 ```
 
 Options:
 
 ```bash
-web-source-bundler --bundle [options] <url> <output-dir>
+web-source-bundler [options] <url> <output-dir>
 
 --no-svg2png   Keep SVG images as-is instead of converting to PNG.
+--version      Print the CLI version.
 ```
 
-Bundle mode writes:
+The command writes:
 
 - `index.md` for the primary source entry.
 - `assets/` for localized primary-source assets or binary source payloads.
@@ -49,6 +50,12 @@ zero-config cleanup:
   stripped from docs served as `text/markdown`, keeping the inner content.
 - **Direct References** are listed only on the main `index.md` (where they are
   localized to the bundled files), not on each reference page.
+- **Low-signal marketing/product homepage references** may be skipped when they
+  are Direct References rather than the primary source. Skipped references remain
+  as external links in the source body, are omitted from readable reference pages
+  and the Direct References section, and are recorded under
+  `references/references.json` as `skipped` entries with
+  `skipped_reason: "low_signal_marketing_reference"`.
 
 ### Site rules
 

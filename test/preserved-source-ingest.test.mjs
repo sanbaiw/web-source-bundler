@@ -139,8 +139,9 @@ async function withServer(routes, fn) {
       return;
     }
 
+    const body = typeof route.body === "function" ? route.body(server.address().port) : route.body;
     res.writeHead(route.status || 200, { "content-type": route.contentType });
-    res.end(route.body);
+    res.end(body);
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -148,6 +149,35 @@ async function withServer(routes, fn) {
 
   try {
     await fn(`https://127.0.0.1:${port}`);
+  } finally {
+    await new Promise((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+  }
+}
+
+async function withAnyLoopbackServer(routes, fn) {
+  const server = createServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => {
+    const route = routes[req.url || "/"];
+    if (!route) {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
+      return;
+    }
+
+    const body = typeof route.body === "function" ? route.body(server.address().port) : route.body;
+    res.writeHead(route.status || 200, { "content-type": route.contentType });
+    res.end(body);
+  });
+
+  await new Promise((resolve) => server.listen(0, "0.0.0.0", resolve));
+  const { port } = server.address();
+
+  try {
+    await fn({
+      sourceOrigin: `https://127.0.0.1:${port}`,
+      referenceOrigin: `https://0.0.0.0:${port}`,
+    });
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
@@ -177,7 +207,7 @@ async function testMarkdownResponsesRemainReadableSourceEntries() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/source.md`, outDir]);
+        const result = await runCli([`${origin}/source.md`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -201,7 +231,11 @@ async function testPackagedBinSymlinkRunsCliEntrypoint() {
 
     const result = await runExecutable(binPath, ["--help"]);
     assert(result.code === 0, `expected symlinked bin help to succeed, got ${result.code}: ${result.stderr}`);
-    assert(result.stderr.includes("web-source-bundler --bundle"), "expected symlinked bin to print CLI usage");
+    assert(result.stdout.includes("web-source-bundler [options] <url> <output-dir>"), "expected symlinked bin to print CLI usage");
+
+    const versionResult = await runExecutable(binPath, ["--version"]);
+    assert(versionResult.code === 0, `expected symlinked bin version to succeed, got ${versionResult.code}: ${versionResult.stderr}`);
+    assert(versionResult.stdout.trim() === "0.1.0", "expected symlinked bin to print package version");
   });
 }
 
@@ -218,7 +252,7 @@ async function testJsonResponsesRemainUnformattedInsideFence() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/data.json`, outDir]);
+        const result = await runCli([`${origin}/data.json`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -243,7 +277,7 @@ async function testBinaryResponsesCreateSourceAssetStub() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/paper.pdf`, outDir]);
+        const result = await runCli([`${origin}/paper.pdf`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -274,7 +308,7 @@ async function testRedirectProvenanceRecordsRequestedFetchedAndFinalUrls() {
         const requested = `${origin.replace("https:", "http:")}/redirect`;
         const fetched = `${origin}/redirect`;
         const final = `${origin}/target.md`;
-        const result = await runCli(["--bundle", requested, outDir]);
+        const result = await runCli([requested, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -288,12 +322,11 @@ async function testRedirectProvenanceRecordsRequestedFetchedAndFinalUrls() {
 
 async function testInvalidUrlsFailBeforeFetchWithClearErrors() {
   await withTempDir(async (dir) => {
-    const dotlessResult = await runCli(["--bundle", "https://localhost/source.md", path.join(dir, "dotless")]);
+    const dotlessResult = await runCli(["https://localhost/source.md", path.join(dir, "dotless")]);
     assert(dotlessResult.code !== 0, "expected dotless hostname to fail");
     assert(dotlessResult.stderr.includes("hostname must contain a dot"), "expected dotless hostname error");
 
     const credentialResult = await runCli([
-      "--bundle",
       "https://user:pass@127.0.0.1/source.md",
       path.join(dir, "credentials"),
     ]);
@@ -342,7 +375,7 @@ async function testHtmlPagesStillConvertAndBinaryReferencesArePreserved() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/article`, outDir]);
+        const result = await runCli([`${origin}/article`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -395,7 +428,7 @@ async function testTablesWithListCellsConvertToSingleLineRows() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/graders`, outDir]);
+        const result = await runCli([`${origin}/graders`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -426,7 +459,7 @@ async function testDuplicateHtmlTitleHeadingIsDeduplicated() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/post`, outDir]);
+        const result = await runCli([`${origin}/post`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -458,7 +491,7 @@ async function testDuplicateHtmlTitleHeadingIsDeduplicatedAfterLongChromePreambl
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/long-post`, outDir]);
+        const result = await runCli([`${origin}/long-post`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -496,7 +529,7 @@ async function testMarkdownPassthroughStripsPreambleAndMdxComponents() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/overview.md`, outDir]);
+        const result = await runCli([`${origin}/overview.md`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -536,7 +569,7 @@ async function testJunkAssetsAreFilteredAndRealFiguresKept() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/page`, outDir]);
+        const result = await runCli([`${origin}/page`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -573,7 +606,7 @@ async function testEmptyTextLinksAndSelfLinksAreCleaned() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/self`, outDir]);
+        const result = await runCli([`${origin}/self`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -608,7 +641,7 @@ async function testEmptyAltImagesRemainValidMarkdownImages() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/hero`, outDir]);
+        const result = await runCli([`${origin}/hero`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -624,7 +657,7 @@ async function testFailureStubOmitsCurlProgressNoise() {
     { "/missing": { status: 404, contentType: "text/plain", body: "nope" } },
     async (origin) => {
       await withTempDir(async (dir) => {
-        const result = await runCli(["--bundle", `${origin}/missing`, path.join(dir, "out")]);
+        const result = await runCli([`${origin}/missing`, path.join(dir, "out")]);
         // A direct 404 throws -> CLI exits non-zero; the error text must not carry
         // curl's progress-meter (the bug this guards against).
         assert(/HTTP 404|Not Found/i.test(result.stderr), "expected a 404 error message");
@@ -664,7 +697,7 @@ async function testDirectReferencesOnlyOnMainPage() {
     await withTempDir(async (dir) => {
       const { port } = server2.address();
       const outDir = path.join(dir, "bundle");
-      const result = await runCli(["--bundle", `https://127.0.0.1:${port}/main`, outDir]);
+      const result = await runCli([`https://127.0.0.1:${port}/main`, outDir]);
       assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
       const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -711,7 +744,7 @@ async function testUnlocalizedRelativeLinksAreAbsolutized() {
     await withTempDir(async (dir) => {
       const { port } = server2.address();
       const outDir = path.join(dir, "bundle");
-      const result = await runCli(["--bundle", `https://127.0.0.1:${port}/main`, outDir]);
+      const result = await runCli([`https://127.0.0.1:${port}/main`, outDir]);
       assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
       const refFiles = (await readdir(path.join(outDir, "references"))).filter((f) => f.endsWith(".md"));
@@ -754,7 +787,7 @@ async function testStructuralChromeLinksAreNotBundledAsReferences() {
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
-        const result = await runCli(["--bundle", `${origin}/product`, outDir]);
+        const result = await runCli([`${origin}/product`, outDir]);
         assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
@@ -766,6 +799,256 @@ async function testStructuralChromeLinksAreNotBundledAsReferences() {
         const originalUrls = Object.values(manifest).map((entry) => entry.original_url);
         assert(originalUrls.length === 1, `expected only one bundled reference, got ${originalUrls.join(", ")}`);
         assert(originalUrls[0] === `${origin}/docs`, "expected only the article link to be bundled");
+      });
+    },
+  );
+}
+
+async function testLowSignalMarketingReferencesAreSkippedAfterFetch() {
+  await withAnyLoopbackServer(
+    {
+      "/main": {
+        contentType: "text/html; charset=utf-8",
+        body: (port) => `<!doctype html>
+<html><head><title>Evaluation Notes</title></head>
+<body><main><article>
+<h1>Evaluation Notes</h1>
+<p>Use the product homepage for provenance, but the docs and paper carry the actual evidence.</p>
+<p><a href="https://0.0.0.0:${port}/">Bolt product homepage</a></p>
+<p><a href="https://0.0.0.0:${port}/docs">Developer docs</a></p>
+</article></main></body></html>`,
+      },
+      "/": {
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html>
+<html><head><title>Bolt AI builder</title></head>
+<body><main>
+<section><h1>Build apps with AI</h1><p>Start for free and ship faster with our product.</p><a href="/signup">Get started</a></section>
+<section><h2>Trusted by leading teams</h2><p>Customers love our platform.</p><img src="/customer-logo.png" alt="Customer logo"></section>
+<section><h2>Pricing that scales</h2><p>Choose Free, Pro, or Enterprise.</p></section>
+<section><h2>Join the newsletter</h2><form><input name="email"><button>Sign up</button></form></section>
+</main></body></html>`,
+      },
+      "/docs": {
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html>
+<html><head><title>Developer Docs</title></head>
+<body><main><article>
+<h1>Developer Docs</h1>
+<p>Configure evaluations with deterministic grading and trace review.</p>
+</article></main></body></html>`,
+      },
+      "/customer-logo.png": {
+        contentType: "image/png",
+        body: PNG_FIGURE,
+      },
+    },
+    async ({ sourceOrigin, referenceOrigin }) => {
+      await withTempDir(async (dir) => {
+        const outDir = path.join(dir, "bundle");
+        const productUrl = `${referenceOrigin}/`;
+        const docsUrl = `${referenceOrigin}/docs`;
+        const result = await runCli([`${sourceOrigin}/main`, outDir]);
+        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+
+        const index = await readFile(path.join(outDir, "index.md"), "utf8");
+        assert(index.includes(`[Bolt product homepage](${productUrl})`), "expected skipped link to remain external in body");
+        assert(index.includes("[Developer docs](references/developer-docs.md)"), "expected docs link localized in body");
+        assert(index.includes("## Direct References"), "expected Direct References section");
+        assert(index.includes("- [Developer Docs](references/developer-docs.md)"), "expected docs in Direct References");
+        assert(!index.includes("- [Bolt AI builder]("), "expected skipped marketing reference omitted from Direct References");
+
+        const referenceFiles = (await readdir(path.join(outDir, "references"))).filter((file) => file.endsWith(".md"));
+        assert(referenceFiles.length === 1, `expected only docs readable reference, got ${referenceFiles.join(",")}`);
+        assert(referenceFiles[0] === "developer-docs.md", "expected docs readable reference file");
+
+        const docs = await readFile(path.join(outDir, "references", "developer-docs.md"), "utf8");
+        assert(docs.includes("Configure evaluations"), "expected docs reference content bundled");
+
+        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
+        assert(manifest["references/developer-docs.md"].original_url === docsUrl, "expected docs manifest entry");
+        assert(manifest.skipped?.[productUrl], "expected skipped marketing reference recorded by original URL");
+        assert(manifest.skipped[productUrl].kind === "skipped", "expected skipped entry kind");
+        assert(
+          manifest.skipped[productUrl].skipped_reason === "low_signal_marketing_reference",
+          "expected stable skipped reason",
+        );
+        assert(manifest.skipped[productUrl].label === "Bolt product homepage", "expected source-side label recorded");
+        assert(manifest.skipped[productUrl].title === "Build apps with AI", "expected fetched title recorded");
+        const referenceAssetsDir = path.join(outDir, "references", "assets");
+        const referenceAssets = existsSync(referenceAssetsDir) ? await readdir(referenceAssetsDir, { recursive: true }) : [];
+        assert(!referenceAssets.some((file) => String(file).endsWith(".png")), "expected skipped page assets not localized");
+      });
+    },
+  );
+}
+
+async function testKnownProductHomepagesCanBeSkippedBeforeFetch() {
+  const { shouldSkipReferenceBeforeFetch } = await import(path.resolve(repoRoot, "dist/cli.js"));
+  const mainUrl = "https://research.example/articles/evals";
+
+  const skipped = shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://bolt.new/" });
+  assert(skipped?.skipped_reason === "low_signal_marketing_reference", "expected known product homepage skipped before fetch");
+
+  assert(
+    shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://anthropic.com/claude-code" })?.skipped_reason
+      === "low_signal_marketing_reference",
+    "expected path-specific Claude Code landing page skipped before fetch",
+  );
+  assert(
+    shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://claude.com/product/claude-code" })?.skipped_reason
+      === "low_signal_marketing_reference",
+    "expected current Claude Code product landing page skipped before fetch",
+  );
+  assert(
+    shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://claude.ai/code" })?.skipped_reason
+      === "low_signal_marketing_reference",
+    "expected Claude Code app landing page skipped before fetch",
+  );
+  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://docs.bolt.new/getting-started" }), "expected docs subdomain protected");
+  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://braintrust.dev/docs/guides" }), "expected docs path protected");
+  assert(
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+    }),
+    "expected article path protected on known product company domain",
+  );
+  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://github.com/user/project" }), "expected repository source protected");
+  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://example.org/" }), "expected unknown homepage to require fetch");
+  assert(!shouldSkipReferenceBeforeFetch({ mainUrl: "https://bolt.new/", referenceUrl: "https://bolt.new/" }), "expected main source never skipped");
+}
+
+function lowSignalMarketingPageFixture() {
+  return {
+    mainHtml: `<main>
+<section><h1>Build with AI</h1><p>Start for free and get started with our product.</p></section>
+<section><h2>Trusted by leading teams</h2><p>Customers rely on this platform.</p></section>
+<section><h2>Pricing that scales</h2><p>Choose Free, Pro, or Enterprise.</p></section>
+<form><input name="email"><button>Sign up</button></form>
+</main>`,
+    articleHtml: "",
+  };
+}
+
+async function testPostFetchSourceLikeSubdomainRootsStayBundleCandidates() {
+  const { isLowSignalMarketingReference } = await import(path.resolve(repoRoot, "dist/cli.js"));
+  const mainUrl = "https://research.example/articles/evals";
+  const page = lowSignalMarketingPageFixture();
+
+  for (const subdomain of ["docs", "help", "developer", "developers", "api"]) {
+    const referenceUrl = `https://${subdomain}.product.example/`;
+    assert(
+      !isLowSignalMarketingReference({ mainUrl, referenceUrl, page }),
+      `expected ${referenceUrl} to remain bundleable after fetch`,
+    );
+  }
+}
+
+async function testPostFetchKnownProductLandingFinalUrlsCanBeSkipped() {
+  const { isLowSignalMarketingReference, shouldSkipReferenceBeforeFetch } = await import(path.resolve(repoRoot, "dist/cli.js"));
+  const mainUrl = "https://research.example/articles/evals";
+  const page = lowSignalMarketingPageFixture();
+
+  assert(
+    !shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://links.example/r/claude-code" }),
+    "expected ambiguous original URL to require fetch",
+  );
+  assert(
+    isLowSignalMarketingReference({ mainUrl, referenceUrl: "https://anthropic.com/claude-code", page }),
+    "expected known Claude Code landing final URL skipped after fetch",
+  );
+  assert(
+    isLowSignalMarketingReference({ mainUrl, referenceUrl: "https://claude.com/product/claude-code", page }),
+    "expected current Claude Code product landing final URL skipped after fetch",
+  );
+  assert(
+    !isLowSignalMarketingReference({ mainUrl, referenceUrl: "https://claude.com/blog/using-claude-code", page }),
+    "expected arbitrary source-like deep paths to remain bundle candidates",
+  );
+}
+
+async function testKnownProductHomepageReferencesAreSkippedBeforeNetworkFetch() {
+  const mainHtml = `<!doctype html>
+<html><head><title>Main Source</title></head>
+<body><main><article>
+<h1>Main Source</h1>
+<p><a href="https://bolt.new/">Bolt homepage</a></p>
+<p><a href="/docs">Local docs</a></p>
+</article></main></body></html>`;
+  const docsHtml = `<!doctype html>
+<html><head><title>Local Docs</title></head>
+<body><main><article><h1>Local Docs</h1><p>Implementation details.</p></article></main></body></html>`;
+
+  await withServer(
+    {
+      "/main": { contentType: "text/html; charset=utf-8", body: mainHtml },
+      "/docs": { contentType: "text/html; charset=utf-8", body: docsHtml },
+    },
+    async (origin) => {
+      await withTempDir(async (dir) => {
+        const outDir = path.join(dir, "bundle");
+        const result = await runCli([`${origin}/main`, outDir]);
+        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.stderr.includes("Skipping low-signal reference https://bolt.new/"),
+          "expected skip message on stderr",
+        );
+
+        const index = await readFile(path.join(outDir, "index.md"), "utf8");
+        assert(index.includes("[Bolt homepage](https://bolt.new/)"), "expected skipped homepage link to remain external");
+        assert(index.includes("[Local docs](references/local-docs.md)"), "expected docs link localized");
+        assert(!index.includes("- [Bolt homepage]("), "expected skipped homepage omitted from Direct References");
+        assert(index.includes("- [Local Docs](references/local-docs.md)"), "expected docs in Direct References");
+
+        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
+        assert(manifest["references/local-docs.md"].original_url === `${origin}/docs`, "expected docs manifest entry");
+        assert(manifest.skipped?.["https://bolt.new/"], "expected skipped known homepage manifest entry");
+        assert(manifest.skipped["https://bolt.new/"].label === "Bolt homepage", "expected skipped label retained");
+        assert(!("title" in manifest.skipped["https://bolt.new/"]), "expected pre-fetch skipped entry not to invent title");
+        assert(!("content_type" in manifest.skipped["https://bolt.new/"]), "expected pre-fetch skipped entry not to invent content type");
+      });
+    },
+  );
+}
+
+async function testArticleProseWithMarketingTermsStillBundles() {
+  await withAnyLoopbackServer(
+    {
+      "/main": {
+        contentType: "text/html; charset=utf-8",
+        body: (port) => `<!doctype html>
+<html><head><title>Main Source</title></head>
+<body><main><article>
+<h1>Main Source</h1>
+<p><a href="https://0.0.0.0:${port}/analysis">Market analysis</a></p>
+</article></main></body></html>`,
+      },
+      "/analysis": {
+        contentType: "text/html; charset=utf-8",
+        body: `<!doctype html>
+<html><head><title>Market analysis</title></head>
+<body><main><article>
+<h1>Market analysis</h1>
+<p>The article compares pricing, customers, testimonials, and product positioning as evidence in a broader evaluation.</p>
+<p>It does not ask readers to sign up, buy a plan, or join a newsletter.</p>
+</article></main></body></html>`,
+      },
+    },
+    async ({ sourceOrigin, referenceOrigin }) => {
+      await withTempDir(async (dir) => {
+        const outDir = path.join(dir, "bundle");
+        const result = await runCli([`${sourceOrigin}/main`, outDir]);
+        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+
+        const index = await readFile(path.join(outDir, "index.md"), "utf8");
+        assert(index.includes("[Market analysis](references/market-analysis.md)"), "expected article link localized");
+        const reference = await readFile(path.join(outDir, "references", "market-analysis.md"), "utf8");
+        assert(reference.includes("compares pricing, customers, testimonials"), "expected article prose bundled");
+
+        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
+        assert(manifest["references/market-analysis.md"].original_url === `${referenceOrigin}/analysis`, "expected article manifest entry");
+        assert(!manifest.skipped, "expected no skipped manifest for article prose false positive");
       });
     },
   );
@@ -864,6 +1147,12 @@ const tests = [
   testDirectReferencesOnlyOnMainPage,
   testUnlocalizedRelativeLinksAreAbsolutized,
   testStructuralChromeLinksAreNotBundledAsReferences,
+  testLowSignalMarketingReferencesAreSkippedAfterFetch,
+  testKnownProductHomepagesCanBeSkippedBeforeFetch,
+  testPostFetchSourceLikeSubdomainRootsStayBundleCandidates,
+  testPostFetchKnownProductLandingFinalUrlsCanBeSkipped,
+  testKnownProductHomepageReferencesAreSkippedBeforeNetworkFetch,
+  testArticleProseWithMarketingTermsStillBundles,
   testSiteRulesStripKnownChrome,
 ];
 
