@@ -15,18 +15,27 @@
   "bin": {
     "web-source-bundler": "dist/cli.js"
   },
-  "files": [
-    "dist",
-    "README.md"
-  ],
+  "files": ["dist", "README.md"],
   "scripts": {
-    "build": "bun build ./src/cli.mjs --target=node --outfile=dist/cli.js --external sharp && chmod +x dist/cli.js",
-    "dev": "bun ./src/cli.mjs",
+    "build": "bun build ./src/cli.ts --target=node --outfile=dist/cli.js --external sharp && chmod +x dist/cli.js",
+    "dev": "bun ./src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint . && knip",
+    "format": "biome check . --write --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
+    "format:check": "biome check . --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
+    "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
     "test": "bun run build && bun ./test/preserved-source-ingest.test.mjs",
-    "pack:check": "bun run test && bun pm pack --dry-run"
+    "pack:check": "bun run check && bun pm pack --dry-run"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^24.0.0",
+    "@types/turndown": "^5.0.5",
+    "knip": "^5.61.3",
+    "typescript": "^5.8.3"
   },
   "dependencies": {
     "sharp": "^0.33.0",

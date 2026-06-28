@@ -1,18 +1,32 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  isLowSignalMarketingReference,
+  shouldSkipReferenceBeforeFetch,
+} from "../src/bundle-core/direct-references.ts";
+import {
+  applySiteRules,
+  stripGenericChrome,
+} from "../src/bundle-core/page-extraction.ts";
+import { tidyConvertedMarkdown } from "../src/bundle-core/rendering.ts";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const cliPath = path.resolve(repoRoot, "dist/cli.js");
-const nodePath = process.env.WEB_SOURCE_BUNDLER_TEST_NODE || (process.env.NVM_BIN ? path.join(process.env.NVM_BIN, "node") : "node");
+const nodePath =
+  process.env.WEB_SOURCE_BUNDLER_TEST_NODE ||
+  (process.env.NVM_BIN ? path.join(process.env.NVM_BIN, "node") : "node");
 const cliEnv = {
   ...process.env,
-  PATH: process.env.NVM_BIN ? `${process.env.NVM_BIN}:${process.env.PATH}` : process.env.PATH,
+  PATH: process.env.NVM_BIN
+    ? `${process.env.NVM_BIN}:${process.env.PATH}`
+    : process.env.PATH,
   NODE_TLS_REJECT_UNAUTHORIZED: "0",
 };
 
@@ -139,7 +153,10 @@ async function withServer(routes, fn) {
       return;
     }
 
-    const body = typeof route.body === "function" ? route.body(server.address().port) : route.body;
+    const body =
+      typeof route.body === "function"
+        ? route.body(server.address().port)
+        : route.body;
     res.writeHead(route.status || 200, { "content-type": route.contentType });
     res.end(body);
   });
@@ -165,7 +182,10 @@ async function withAnyLoopbackServer(routes, fn) {
       return;
     }
 
-    const body = typeof route.body === "function" ? route.body(server.address().port) : route.body;
+    const body =
+      typeof route.body === "function"
+        ? route.body(server.address().port)
+        : route.body;
     res.writeHead(route.status || 200, { "content-type": route.contentType });
     res.end(body);
   });
@@ -208,17 +228,35 @@ async function testMarkdownResponsesRemainReadableSourceEntries() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/source.md`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("Source: https://127.0.0.1:"), "expected source provenance header");
-        assert(index.includes("Content-Type: text/markdown; charset=utf-8"), "expected content type provenance");
+        assert(
+          index.includes("Source: https://127.0.0.1:"),
+          "expected source provenance header",
+        );
+        assert(
+          index.includes("Content-Type: text/markdown; charset=utf-8"),
+          "expected content type provenance",
+        );
         // The body content is preserved, but the redundant leading H1 (which the
         // provenance header already emits as `# {title}`) is de-duplicated.
-        assert(index.includes("- alpha\n- beta"), "expected original Markdown body content to be preserved");
-        assert(!index.includes("```markdown"), "expected Markdown body not to be fenced");
+        assert(
+          index.includes("- alpha\n- beta"),
+          "expected original Markdown body content to be preserved",
+        );
+        assert(
+          !index.includes("```markdown"),
+          "expected Markdown body not to be fenced",
+        );
         const h1Count = (index.match(/^# /gm) || []).length;
-        assert(h1Count === 1, `expected exactly one H1 after dedup, got ${h1Count}`);
+        assert(
+          h1Count === 1,
+          `expected exactly one H1 after dedup, got ${h1Count}`,
+        );
       });
     },
   );
@@ -230,12 +268,24 @@ async function testPackagedBinSymlinkRunsCliEntrypoint() {
     await symlink(cliPath, binPath);
 
     const result = await runExecutable(binPath, ["--help"]);
-    assert(result.code === 0, `expected symlinked bin help to succeed, got ${result.code}: ${result.stderr}`);
-    assert(result.stdout.includes("web-source-bundler [options] <url> <output-dir>"), "expected symlinked bin to print CLI usage");
+    assert(
+      result.code === 0,
+      `expected symlinked bin help to succeed, got ${result.code}: ${result.stderr}`,
+    );
+    assert(
+      result.stdout.includes("web-source-bundler [options] <url> <output-dir>"),
+      "expected symlinked bin to print CLI usage",
+    );
 
     const versionResult = await runExecutable(binPath, ["--version"]);
-    assert(versionResult.code === 0, `expected symlinked bin version to succeed, got ${versionResult.code}: ${versionResult.stderr}`);
-    assert(versionResult.stdout.trim() === "0.1.0", "expected symlinked bin to print package version");
+    assert(
+      versionResult.code === 0,
+      `expected symlinked bin version to succeed, got ${versionResult.code}: ${versionResult.stderr}`,
+    );
+    assert(
+      versionResult.stdout.trim() === "0.1.0",
+      "expected symlinked bin to print package version",
+    );
   });
 }
 
@@ -253,12 +303,24 @@ async function testJsonResponsesRemainUnformattedInsideFence() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/data.json`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("Content-Type: application/json; charset=utf-8"), "expected JSON content type provenance");
-        assert(index.includes(`\`\`\`json\n${jsonBody}\`\`\``), "expected exact JSON body inside a json fence");
-        assert(!index.includes('"a": 1,\n  "b": 2'), "expected JSON not to be pretty-printed or reordered");
+        assert(
+          index.includes("Content-Type: application/json; charset=utf-8"),
+          "expected JSON content type provenance",
+        );
+        assert(
+          index.includes(`\`\`\`json\n${jsonBody}\`\`\``),
+          "expected exact JSON body inside a json fence",
+        );
+        assert(
+          !index.includes('"a": 1,\n  "b": 2'),
+          "expected JSON not to be pretty-printed or reordered",
+        );
       });
     },
   );
@@ -278,13 +340,29 @@ async function testBinaryResponsesCreateSourceAssetStub() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/paper.pdf`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
         const asset = await readFile(path.join(outDir, "assets/source.pdf"));
-        assert(index.includes("Original source asset: [assets/source.pdf](assets/source.pdf)"), "expected stub to link source asset");
-        assert(index.includes("Text extraction is deferred to a specialized pipeline."), "expected deferred extraction stub");
-        assert(Buffer.compare(asset, pdfBody) === 0, "expected source asset bytes to match response exactly");
+        assert(
+          index.includes(
+            "Original source asset: [assets/source.pdf](assets/source.pdf)",
+          ),
+          "expected stub to link source asset",
+        );
+        assert(
+          index.includes(
+            "Text extraction is deferred to a specialized pipeline.",
+          ),
+          "expected deferred extraction stub",
+        );
+        assert(
+          Buffer.compare(asset, pdfBody) === 0,
+          "expected source asset bytes to match response exactly",
+        );
       });
     },
   );
@@ -309,12 +387,24 @@ async function testRedirectProvenanceRecordsRequestedFetchedAndFinalUrls() {
         const fetched = `${origin}/redirect`;
         const final = `${origin}/target.md`;
         const result = await runCli([requested, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes(`Source: ${requested}`), "expected original requested URL provenance");
-        assert(index.includes(`Fetched URL: ${fetched}`), "expected HTTP-to-HTTPS fetched URL provenance");
-        assert(index.includes(`Final URL: ${final}`), "expected redirect final URL provenance");
+        assert(
+          index.includes(`Source: ${requested}`),
+          "expected original requested URL provenance",
+        );
+        assert(
+          index.includes(`Fetched URL: ${fetched}`),
+          "expected HTTP-to-HTTPS fetched URL provenance",
+        );
+        assert(
+          index.includes(`Final URL: ${final}`),
+          "expected redirect final URL provenance",
+        );
       });
     },
   );
@@ -322,16 +412,25 @@ async function testRedirectProvenanceRecordsRequestedFetchedAndFinalUrls() {
 
 async function testInvalidUrlsFailBeforeFetchWithClearErrors() {
   await withTempDir(async (dir) => {
-    const dotlessResult = await runCli(["https://localhost/source.md", path.join(dir, "dotless")]);
+    const dotlessResult = await runCli([
+      "https://localhost/source.md",
+      path.join(dir, "dotless"),
+    ]);
     assert(dotlessResult.code !== 0, "expected dotless hostname to fail");
-    assert(dotlessResult.stderr.includes("hostname must contain a dot"), "expected dotless hostname error");
+    assert(
+      dotlessResult.stderr.includes("hostname must contain a dot"),
+      "expected dotless hostname error",
+    );
 
     const credentialResult = await runCli([
       "https://user:pass@127.0.0.1/source.md",
       path.join(dir, "credentials"),
     ]);
     assert(credentialResult.code !== 0, "expected credential URL to fail");
-    assert(credentialResult.stderr.includes("username and password are not allowed"), "expected credential URL error");
+    assert(
+      credentialResult.stderr.includes("username and password are not allowed"),
+      "expected credential URL error",
+    );
   });
 }
 
@@ -376,32 +475,83 @@ async function testHtmlPagesStillConvertAndBinaryReferencesArePreserved() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/article`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("Intro paragraph."), "expected HTML body to convert to Markdown");
-        assert(index.includes("| Name |"), "expected GFM table conversion to remain enabled");
-        assert(index.includes("![Diagram](assets/01-diagram.png)"), "expected page image to be localized");
-        assert(index.includes("[paper.pdf](references/paper-pdf.md)"), "expected direct reference link to point local");
-
-        const localizedImage = await readFile(path.join(outDir, "assets/01-diagram.png"));
-        assert(Buffer.compare(localizedImage, PNG_FIGURE) === 0, "expected localized image bytes to match");
-
-        const referenceStub = await readFile(path.join(outDir, "references/paper-pdf.md"), "utf8");
         assert(
-          referenceStub.includes("Original source asset: [assets/paper-pdf.pdf](assets/paper-pdf.pdf)"),
+          index.includes("Intro paragraph."),
+          "expected HTML body to convert to Markdown",
+        );
+        assert(
+          index.includes("| Name |"),
+          "expected GFM table conversion to remain enabled",
+        );
+        assert(
+          index.includes("![Diagram](assets/01-diagram.png)"),
+          "expected page image to be localized",
+        );
+        assert(
+          index.includes("[paper.pdf](references/paper-pdf.md)"),
+          "expected direct reference link to point local",
+        );
+
+        const localizedImage = await readFile(
+          path.join(outDir, "assets/01-diagram.png"),
+        );
+        assert(
+          Buffer.compare(localizedImage, PNG_FIGURE) === 0,
+          "expected localized image bytes to match",
+        );
+
+        const referenceStub = await readFile(
+          path.join(outDir, "references/paper-pdf.md"),
+          "utf8",
+        );
+        assert(
+          referenceStub.includes(
+            "Original source asset: [assets/paper-pdf.pdf](assets/paper-pdf.pdf)",
+          ),
           "expected binary reference stub to link preserved asset",
         );
-        const referenceAsset = await readFile(path.join(outDir, "references/assets/paper-pdf.pdf"));
-        assert(Buffer.compare(referenceAsset, pdfBody) === 0, "expected binary reference asset bytes to match");
-
-        const manifest = JSON.parse(await readFile(path.join(outDir, "references/references.json"), "utf8"));
-        assert(manifest["references/paper-pdf.md"].original_url === `${origin}/paper-redirect`, "expected manifest original URL");
-        assert(manifest["references/paper-pdf.md"].final_url === `${origin}/paper.pdf`, "expected manifest final URL");
-        assert(manifest["references/paper-pdf.md"].content_type === "application/pdf", "expected manifest content type");
-        assert(manifest["references/paper-pdf.md"].kind === "asset", "expected manifest asset kind");
+        const referenceAsset = await readFile(
+          path.join(outDir, "references/assets/paper-pdf.pdf"),
+        );
         assert(
-          manifest["references/paper-pdf.md"].asset_path === "references/assets/paper-pdf.pdf",
+          Buffer.compare(referenceAsset, pdfBody) === 0,
+          "expected binary reference asset bytes to match",
+        );
+
+        const manifest = JSON.parse(
+          await readFile(
+            path.join(outDir, "references/references.json"),
+            "utf8",
+          ),
+        );
+        assert(
+          manifest["references/paper-pdf.md"].original_url ===
+            `${origin}/paper-redirect`,
+          "expected manifest original URL",
+        );
+        assert(
+          manifest["references/paper-pdf.md"].final_url ===
+            `${origin}/paper.pdf`,
+          "expected manifest final URL",
+        );
+        assert(
+          manifest["references/paper-pdf.md"].content_type ===
+            "application/pdf",
+          "expected manifest content type",
+        );
+        assert(
+          manifest["references/paper-pdf.md"].kind === "asset",
+          "expected manifest asset kind",
+        );
+        assert(
+          manifest["references/paper-pdf.md"].asset_path ===
+            "references/assets/paper-pdf.pdf",
           "expected manifest asset path",
         );
       });
@@ -429,14 +579,28 @@ async function testTablesWithListCellsConvertToSingleLineRows() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/graders`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        const tableRows = index.split("\n").filter((line) => line.trim().startsWith("|"));
-        assert(tableRows.length === 3, `expected header + separator + 1 data row, got ${tableRows.length}`);
+        const tableRows = index
+          .split("\n")
+          .filter((line) => line.trim().startsWith("|"));
+        assert(
+          tableRows.length === 3,
+          `expected header + separator + 1 data row, got ${tableRows.length}`,
+        );
         const dataRow = tableRows[2];
-        assert(dataRow.includes("String match<br>Binary tests"), "expected list items flattened with <br>");
-        assert(dataRow.includes("Fast<br>Cheap"), "expected second cell flattened with <br>");
+        assert(
+          dataRow.includes("String match<br>Binary tests"),
+          "expected list items flattened with <br>",
+        );
+        assert(
+          dataRow.includes("Fast<br>Cheap"),
+          "expected second cell flattened with <br>",
+        );
       });
     },
   );
@@ -460,12 +624,18 @@ async function testDuplicateHtmlTitleHeadingIsDeduplicated() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/post`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
         const h1Count = (index.match(/^# /gm) || []).length;
         assert(h1Count === 1, `expected exactly one H1, got ${h1Count}`);
-        assert(index.includes("# Building Effective AI Agents"), "expected provenance title preserved");
+        assert(
+          index.includes("# Building Effective AI Agents"),
+          "expected provenance title preserved",
+        );
         assert(index.includes("Body text."), "expected body content preserved");
       });
     },
@@ -487,17 +657,28 @@ async function testDuplicateHtmlTitleHeadingIsDeduplicatedAfterLongChromePreambl
 </main></body></html>`;
 
   await withServer(
-    { "/long-post": { contentType: "text/html; charset=utf-8", body: htmlBody } },
+    {
+      "/long-post": { contentType: "text/html; charset=utf-8", body: htmlBody },
+    },
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/long-post`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
         const h1Count = (index.match(/^# /gm) || []).length;
-        assert(h1Count === 1, `expected exactly one H1 after long preamble, got ${h1Count}`);
-        assert(index.includes("Body text after a long preamble."), "expected body content preserved");
+        assert(
+          h1Count === 1,
+          `expected exactly one H1 after long preamble, got ${h1Count}`,
+        );
+        assert(
+          index.includes("Body text after a long preamble."),
+          "expected body content preserved",
+        );
       });
     },
   );
@@ -525,30 +706,60 @@ async function testMarkdownPassthroughStripsPreambleAndMdxComponents() {
   ].join("\n");
 
   await withServer(
-    { "/overview.md": { contentType: "text/markdown; charset=utf-8", body: markdownBody } },
+    {
+      "/overview.md": {
+        contentType: "text/markdown; charset=utf-8",
+        body: markdownBody,
+      },
+    },
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/overview.md`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
         const h1Count = (index.match(/^# /gm) || []).length;
-        assert(h1Count === 1, `expected one H1 after preamble+dup strip, got ${h1Count}`);
-        assert(!index.includes("Documentation Index"), "expected llms.txt preamble removed");
-        assert(!index.includes("<CodeGroup>"), "expected MDX CodeGroup wrapper removed");
+        assert(
+          h1Count === 1,
+          `expected one H1 after preamble+dup strip, got ${h1Count}`,
+        );
+        assert(
+          !index.includes("Documentation Index"),
+          "expected llms.txt preamble removed",
+        );
+        assert(
+          !index.includes("<CodeGroup>"),
+          "expected MDX CodeGroup wrapper removed",
+        );
         assert(!index.includes("<Note>"), "expected MDX Note wrapper removed");
-        assert(!index.includes("theme={null}"), "expected theme={null} token removed");
-        assert(index.includes("print('hi')"), "expected fenced code content kept");
-        assert(index.includes("Remember this."), "expected Note inner text kept");
-        assert(index.includes("Real documentation prose."), "expected prose kept");
+        assert(
+          !index.includes("theme={null}"),
+          "expected theme={null} token removed",
+        );
+        assert(
+          index.includes("print('hi')"),
+          "expected fenced code content kept",
+        );
+        assert(
+          index.includes("Remember this."),
+          "expected Note inner text kept",
+        );
+        assert(
+          index.includes("Real documentation prose."),
+          "expected prose kept",
+        );
       });
     },
   );
 }
 
 async function testJunkAssetsAreFilteredAndRealFiguresKept() {
-  const htmlErrorAsGif = "<!DOCTYPE html><html><title>Wikimedia Error</title><body>rate limited</body></html>";
+  const htmlErrorAsGif =
+    "<!DOCTYPE html><html><title>Wikimedia Error</title><body>rate limited</body></html>";
   const htmlBody = `<!doctype html>
 <html><head><title>Figures</title></head>
 <body><main><article>
@@ -570,15 +781,33 @@ async function testJunkAssetsAreFilteredAndRealFiguresKept() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/page`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
         const assetFiles = await readdir(path.join(outDir, "assets"));
-        assert(assetFiles.length === 1, `expected only the real figure kept, got ${assetFiles.join(",")}`);
-        assert(assetFiles[0].endsWith("real-figure.png"), "expected the real figure to be the kept asset");
-        assert(index.includes("![real figure](assets/01-real-figure.png)"), "expected real figure embedded");
-        assert(!index.includes("track"), "expected tracking pixel embed dropped");
-        assert(!index.includes("animation"), "expected non-image gif embed dropped");
+        assert(
+          assetFiles.length === 1,
+          `expected only the real figure kept, got ${assetFiles.join(",")}`,
+        );
+        assert(
+          assetFiles[0].endsWith("real-figure.png"),
+          "expected the real figure to be the kept asset",
+        );
+        assert(
+          index.includes("![real figure](assets/01-real-figure.png)"),
+          "expected real figure embedded",
+        );
+        assert(
+          !index.includes("track"),
+          "expected tracking pixel embed dropped",
+        );
+        assert(
+          !index.includes("animation"),
+          "expected non-image gif embed dropped",
+        );
         assert(index.includes("Context paragraph."), "expected body text kept");
       });
     },
@@ -607,22 +836,41 @@ async function testEmptyTextLinksAndSelfLinksAreCleaned() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/self`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(!/\[\s*\]\(/.test(index), "expected no empty-text links remaining");
-        assert(index.includes("Edit button: here."), "expected surrounding text kept after icon-link removal");
+        assert(
+          !/\[\s*\]\(/.test(index),
+          "expected no empty-text links remaining",
+        );
+        assert(
+          index.includes("Edit button: here."),
+          "expected surrounding text kept after icon-link removal",
+        );
       });
     },
   );
 
-  const { tidyConvertedMarkdown } = await import(path.resolve(repoRoot, "dist/cli.js"));
-  const withSelfLink = "See [tau2-bench paper](tau2-bench.md) and [other](https://x.example/y).";
+  const withSelfLink =
+    "See [tau2-bench paper](tau2-bench.md) and [other](https://x.example/y).";
   const unwrapped = tidyConvertedMarkdown(withSelfLink, "tau2-bench.md");
-  assert(unwrapped.includes("See tau2-bench paper and"), "expected self-link unwrapped to plain text");
-  assert(unwrapped.includes("[other](https://x.example/y)"), "expected non-self link preserved");
-  const withTitledEmptyLinks = '[](https://a.example "title")[](https://b.example)';
-  assert(tidyConvertedMarkdown(withTitledEmptyLinks) === "", "expected adjacent/titled empty links removed");
+  assert(
+    unwrapped.includes("See tau2-bench paper and"),
+    "expected self-link unwrapped to plain text",
+  );
+  assert(
+    unwrapped.includes("[other](https://x.example/y)"),
+    "expected non-self link preserved",
+  );
+  const withTitledEmptyLinks =
+    '[](https://a.example "title")[](https://b.example)';
+  assert(
+    tidyConvertedMarkdown(withTitledEmptyLinks) === "",
+    "expected adjacent/titled empty links removed",
+  );
 }
 
 async function testEmptyAltImagesRemainValidMarkdownImages() {
@@ -642,11 +890,20 @@ async function testEmptyAltImagesRemainValidMarkdownImages() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/hero`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("![](assets/01-hero.png)"), "expected empty-alt image markdown preserved");
-        assert(!index.split("\n").includes("!"), "expected no orphan exclamation-mark lines");
+        assert(
+          index.includes("![](assets/01-hero.png)"),
+          "expected empty-alt image markdown preserved",
+        );
+        assert(
+          !index.split("\n").includes("!"),
+          "expected no orphan exclamation-mark lines",
+        );
       });
     },
   );
@@ -657,11 +914,20 @@ async function testFailureStubOmitsCurlProgressNoise() {
     { "/missing": { status: 404, contentType: "text/plain", body: "nope" } },
     async (origin) => {
       await withTempDir(async (dir) => {
-        const result = await runCli([`${origin}/missing`, path.join(dir, "out")]);
+        const result = await runCli([
+          `${origin}/missing`,
+          path.join(dir, "out"),
+        ]);
         // A direct 404 throws -> CLI exits non-zero; the error text must not carry
         // curl's progress-meter (the bug this guards against).
-        assert(/HTTP 404|Not Found/i.test(result.stderr), "expected a 404 error message");
-        assert(!/% Total|% Received|Dload|Xferd/.test(result.stderr), "expected no curl progress-meter noise");
+        assert(
+          /HTTP 404|Not Found/i.test(result.stderr),
+          "expected a 404 error message",
+        );
+        assert(
+          !/% Total|% Received|Dload|Xferd/.test(result.stderr),
+          "expected no curl progress-meter noise",
+        );
       });
     },
   );
@@ -681,7 +947,12 @@ async function testDirectReferencesOnlyOnMainPage() {
   const server2 = createServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => {
     if (req.url === "/main") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(mainHtml.replace("REF_URL", `https://127.0.0.1:${server2.address().port}/ref`));
+      res.end(
+        mainHtml.replace(
+          "REF_URL",
+          `https://127.0.0.1:${server2.address().port}/ref`,
+        ),
+      );
       return;
     }
     if (req.url === "/ref") {
@@ -698,14 +969,28 @@ async function testDirectReferencesOnlyOnMainPage() {
       const { port } = server2.address();
       const outDir = path.join(dir, "bundle");
       const result = await runCli([`https://127.0.0.1:${port}/main`, outDir]);
-      assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+      assert(
+        result.code === 0,
+        `expected CLI success, got ${result.code}: ${result.stderr}`,
+      );
 
       const index = await readFile(path.join(outDir, "index.md"), "utf8");
-      assert(index.includes("## Direct References"), "expected main page to keep Direct References");
+      assert(
+        index.includes("## Direct References"),
+        "expected main page to keep Direct References",
+      );
 
-      const refFiles = (await readdir(path.join(outDir, "references"))).filter((f) => f.endsWith(".md"));
-      const refIndex = await readFile(path.join(outDir, "references", refFiles[0]), "utf8");
-      assert(!refIndex.includes("## Direct References"), "expected reference page to omit Direct References");
+      const refFiles = (await readdir(path.join(outDir, "references"))).filter(
+        (f) => f.endsWith(".md"),
+      );
+      const refIndex = await readFile(
+        path.join(outDir, "references", refFiles[0]),
+        "utf8",
+      );
+      assert(
+        !refIndex.includes("## Direct References"),
+        "expected reference page to omit Direct References",
+      );
     });
   } finally {
     await new Promise((resolve) => server2.close(() => resolve()));
@@ -728,7 +1013,12 @@ async function testUnlocalizedRelativeLinksAreAbsolutized() {
   const server2 = createServer({ key: TLS_KEY, cert: TLS_CERT }, (req, res) => {
     if (req.url === "/main") {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(mainHtml.replace("REF_URL", `https://127.0.0.1:${server2.address().port}/ref`));
+      res.end(
+        mainHtml.replace(
+          "REF_URL",
+          `https://127.0.0.1:${server2.address().port}/ref`,
+        ),
+      );
       return;
     }
     if (req.url === "/ref") {
@@ -745,12 +1035,28 @@ async function testUnlocalizedRelativeLinksAreAbsolutized() {
       const { port } = server2.address();
       const outDir = path.join(dir, "bundle");
       const result = await runCli([`https://127.0.0.1:${port}/main`, outDir]);
-      assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+      assert(
+        result.code === 0,
+        `expected CLI success, got ${result.code}: ${result.stderr}`,
+      );
 
-      const refFiles = (await readdir(path.join(outDir, "references"))).filter((f) => f.endsWith(".md"));
-      const refIndex = await readFile(path.join(outDir, "references", refFiles[0]), "utf8");
-      assert(refIndex.includes(`[Docs](https://127.0.0.1:${port}/docs/getting-started)`), "expected unresolved relative link absolutized");
-      assert(!refIndex.includes("[Docs](/docs/getting-started)"), "expected no broken root-relative link");
+      const refFiles = (await readdir(path.join(outDir, "references"))).filter(
+        (f) => f.endsWith(".md"),
+      );
+      const refIndex = await readFile(
+        path.join(outDir, "references", refFiles[0]),
+        "utf8",
+      );
+      assert(
+        refIndex.includes(
+          `[Docs](https://127.0.0.1:${port}/docs/getting-started)`,
+        ),
+        "expected unresolved relative link absolutized",
+      );
+      assert(
+        !refIndex.includes("[Docs](/docs/getting-started)"),
+        "expected no broken root-relative link",
+      );
     });
   } finally {
     await new Promise((resolve) => server2.close(() => resolve()));
@@ -773,32 +1079,71 @@ async function testStructuralChromeLinksAreNotBundledAsReferences() {
 </div>
 <footer><a href="/terms">Terms</a></footer>
 </body></html>`;
-  const simplePage = (title) => `<!doctype html><html><head><title>${title}</title></head>
+  const simplePage = (
+    title,
+  ) => `<!doctype html><html><head><title>${title}</title></head>
 <body><main><article><h1>${title}</h1><p>${title} body.</p></article></main></body></html>`;
 
   await withServer(
     {
       "/product": { contentType: "text/html; charset=utf-8", body: mainHtml },
-      "/pricing": { contentType: "text/html; charset=utf-8", body: simplePage("Pricing") },
-      "/careers": { contentType: "text/html; charset=utf-8", body: simplePage("Careers") },
-      "/docs": { contentType: "text/html; charset=utf-8", body: simplePage("Developer Docs") },
-      "/terms": { contentType: "text/html; charset=utf-8", body: simplePage("Terms") },
+      "/pricing": {
+        contentType: "text/html; charset=utf-8",
+        body: simplePage("Pricing"),
+      },
+      "/careers": {
+        contentType: "text/html; charset=utf-8",
+        body: simplePage("Careers"),
+      },
+      "/docs": {
+        contentType: "text/html; charset=utf-8",
+        body: simplePage("Developer Docs"),
+      },
+      "/terms": {
+        contentType: "text/html; charset=utf-8",
+        body: simplePage("Terms"),
+      },
     },
     async (origin) => {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/product`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("[developer docs](references/developer-docs.md)"), "expected content reference localized");
-        assert(!index.includes("Pricing"), "expected header nav text removed from output");
-        assert(!index.includes("Terms"), "expected footer text removed from output");
+        assert(
+          index.includes("[developer docs](references/developer-docs.md)"),
+          "expected content reference localized",
+        );
+        assert(
+          !index.includes("Pricing"),
+          "expected header nav text removed from output",
+        );
+        assert(
+          !index.includes("Terms"),
+          "expected footer text removed from output",
+        );
 
-        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
-        const originalUrls = Object.values(manifest).map((entry) => entry.original_url);
-        assert(originalUrls.length === 1, `expected only one bundled reference, got ${originalUrls.join(", ")}`);
-        assert(originalUrls[0] === `${origin}/docs`, "expected only the article link to be bundled");
+        const manifest = JSON.parse(
+          await readFile(
+            path.join(outDir, "references", "references.json"),
+            "utf8",
+          ),
+        );
+        const originalUrls = Object.values(manifest).map(
+          (entry) => entry.original_url,
+        );
+        assert(
+          originalUrls.length === 1,
+          `expected only one bundled reference, got ${originalUrls.join(", ")}`,
+        );
+        assert(
+          originalUrls[0] === `${origin}/docs`,
+          "expected only the article link to be bundled",
+        );
       });
     },
   );
@@ -849,74 +1194,174 @@ async function testLowSignalMarketingReferencesAreSkippedAfterFetch() {
         const productUrl = `${referenceOrigin}/`;
         const docsUrl = `${referenceOrigin}/docs`;
         const result = await runCli([`${sourceOrigin}/main`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes(`[Bolt product homepage](${productUrl})`), "expected skipped link to remain external in body");
-        assert(index.includes("[Developer docs](references/developer-docs.md)"), "expected docs link localized in body");
-        assert(index.includes("## Direct References"), "expected Direct References section");
-        assert(index.includes("- [Developer Docs](references/developer-docs.md)"), "expected docs in Direct References");
-        assert(!index.includes("- [Bolt AI builder]("), "expected skipped marketing reference omitted from Direct References");
-
-        const referenceFiles = (await readdir(path.join(outDir, "references"))).filter((file) => file.endsWith(".md"));
-        assert(referenceFiles.length === 1, `expected only docs readable reference, got ${referenceFiles.join(",")}`);
-        assert(referenceFiles[0] === "developer-docs.md", "expected docs readable reference file");
-
-        const docs = await readFile(path.join(outDir, "references", "developer-docs.md"), "utf8");
-        assert(docs.includes("Configure evaluations"), "expected docs reference content bundled");
-
-        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
-        assert(manifest["references/developer-docs.md"].original_url === docsUrl, "expected docs manifest entry");
-        assert(manifest.skipped?.[productUrl], "expected skipped marketing reference recorded by original URL");
-        assert(manifest.skipped[productUrl].kind === "skipped", "expected skipped entry kind");
         assert(
-          manifest.skipped[productUrl].skipped_reason === "low_signal_marketing_reference",
+          index.includes(`[Bolt product homepage](${productUrl})`),
+          "expected skipped link to remain external in body",
+        );
+        assert(
+          index.includes("[Developer docs](references/developer-docs.md)"),
+          "expected docs link localized in body",
+        );
+        assert(
+          index.includes("## Direct References"),
+          "expected Direct References section",
+        );
+        assert(
+          index.includes("- [Developer Docs](references/developer-docs.md)"),
+          "expected docs in Direct References",
+        );
+        assert(
+          !index.includes("- [Bolt AI builder]("),
+          "expected skipped marketing reference omitted from Direct References",
+        );
+
+        const referenceFiles = (
+          await readdir(path.join(outDir, "references"))
+        ).filter((file) => file.endsWith(".md"));
+        assert(
+          referenceFiles.length === 1,
+          `expected only docs readable reference, got ${referenceFiles.join(",")}`,
+        );
+        assert(
+          referenceFiles[0] === "developer-docs.md",
+          "expected docs readable reference file",
+        );
+
+        const docs = await readFile(
+          path.join(outDir, "references", "developer-docs.md"),
+          "utf8",
+        );
+        assert(
+          docs.includes("Configure evaluations"),
+          "expected docs reference content bundled",
+        );
+
+        const manifest = JSON.parse(
+          await readFile(
+            path.join(outDir, "references", "references.json"),
+            "utf8",
+          ),
+        );
+        assert(
+          manifest["references/developer-docs.md"].original_url === docsUrl,
+          "expected docs manifest entry",
+        );
+        assert(
+          manifest.skipped?.[productUrl],
+          "expected skipped marketing reference recorded by original URL",
+        );
+        assert(
+          manifest.skipped[productUrl].kind === "skipped",
+          "expected skipped entry kind",
+        );
+        assert(
+          manifest.skipped[productUrl].skipped_reason ===
+            "low_signal_marketing_reference",
           "expected stable skipped reason",
         );
-        assert(manifest.skipped[productUrl].label === "Bolt product homepage", "expected source-side label recorded");
-        assert(manifest.skipped[productUrl].title === "Build apps with AI", "expected fetched title recorded");
+        assert(
+          manifest.skipped[productUrl].label === "Bolt product homepage",
+          "expected source-side label recorded",
+        );
+        assert(
+          manifest.skipped[productUrl].title === "Build apps with AI",
+          "expected fetched title recorded",
+        );
         const referenceAssetsDir = path.join(outDir, "references", "assets");
-        const referenceAssets = existsSync(referenceAssetsDir) ? await readdir(referenceAssetsDir, { recursive: true }) : [];
-        assert(!referenceAssets.some((file) => String(file).endsWith(".png")), "expected skipped page assets not localized");
+        const referenceAssets = existsSync(referenceAssetsDir)
+          ? await readdir(referenceAssetsDir, { recursive: true })
+          : [];
+        assert(
+          !referenceAssets.some((file) => String(file).endsWith(".png")),
+          "expected skipped page assets not localized",
+        );
       });
     },
   );
 }
 
 async function testKnownProductHomepagesCanBeSkippedBeforeFetch() {
-  const { shouldSkipReferenceBeforeFetch } = await import(path.resolve(repoRoot, "dist/cli.js"));
   const mainUrl = "https://research.example/articles/evals";
 
-  const skipped = shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://bolt.new/" });
-  assert(skipped?.skipped_reason === "low_signal_marketing_reference", "expected known product homepage skipped before fetch");
+  const skipped = shouldSkipReferenceBeforeFetch({
+    mainUrl,
+    referenceUrl: "https://bolt.new/",
+  });
+  assert(
+    skipped?.skipped_reason === "low_signal_marketing_reference",
+    "expected known product homepage skipped before fetch",
+  );
 
   assert(
-    shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://anthropic.com/claude-code" })?.skipped_reason
-      === "low_signal_marketing_reference",
+    shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://anthropic.com/claude-code",
+    })?.skipped_reason === "low_signal_marketing_reference",
     "expected path-specific Claude Code landing page skipped before fetch",
   );
   assert(
-    shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://claude.com/product/claude-code" })?.skipped_reason
-      === "low_signal_marketing_reference",
+    shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://claude.com/product/claude-code",
+    })?.skipped_reason === "low_signal_marketing_reference",
     "expected current Claude Code product landing page skipped before fetch",
   );
   assert(
-    shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://claude.ai/code" })?.skipped_reason
-      === "low_signal_marketing_reference",
+    shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://claude.ai/code",
+    })?.skipped_reason === "low_signal_marketing_reference",
     "expected Claude Code app landing page skipped before fetch",
   );
-  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://docs.bolt.new/getting-started" }), "expected docs subdomain protected");
-  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://braintrust.dev/docs/guides" }), "expected docs path protected");
   assert(
     !shouldSkipReferenceBeforeFetch({
       mainUrl,
-      referenceUrl: "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
+      referenceUrl: "https://docs.bolt.new/getting-started",
+    }),
+    "expected docs subdomain protected",
+  );
+  assert(
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://braintrust.dev/docs/guides",
+    }),
+    "expected docs path protected",
+  );
+  assert(
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl:
+        "https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents",
     }),
     "expected article path protected on known product company domain",
   );
-  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://github.com/user/project" }), "expected repository source protected");
-  assert(!shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://example.org/" }), "expected unknown homepage to require fetch");
-  assert(!shouldSkipReferenceBeforeFetch({ mainUrl: "https://bolt.new/", referenceUrl: "https://bolt.new/" }), "expected main source never skipped");
+  assert(
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://github.com/user/project",
+    }),
+    "expected repository source protected",
+  );
+  assert(
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://example.org/",
+    }),
+    "expected unknown homepage to require fetch",
+  );
+  assert(
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl: "https://bolt.new/",
+      referenceUrl: "https://bolt.new/",
+    }),
+    "expected main source never skipped",
+  );
 }
 
 function lowSignalMarketingPageFixture() {
@@ -932,7 +1377,6 @@ function lowSignalMarketingPageFixture() {
 }
 
 async function testPostFetchSourceLikeSubdomainRootsStayBundleCandidates() {
-  const { isLowSignalMarketingReference } = await import(path.resolve(repoRoot, "dist/cli.js"));
   const mainUrl = "https://research.example/articles/evals";
   const page = lowSignalMarketingPageFixture();
 
@@ -946,24 +1390,38 @@ async function testPostFetchSourceLikeSubdomainRootsStayBundleCandidates() {
 }
 
 async function testPostFetchKnownProductLandingFinalUrlsCanBeSkipped() {
-  const { isLowSignalMarketingReference, shouldSkipReferenceBeforeFetch } = await import(path.resolve(repoRoot, "dist/cli.js"));
   const mainUrl = "https://research.example/articles/evals";
   const page = lowSignalMarketingPageFixture();
 
   assert(
-    !shouldSkipReferenceBeforeFetch({ mainUrl, referenceUrl: "https://links.example/r/claude-code" }),
+    !shouldSkipReferenceBeforeFetch({
+      mainUrl,
+      referenceUrl: "https://links.example/r/claude-code",
+    }),
     "expected ambiguous original URL to require fetch",
   );
   assert(
-    isLowSignalMarketingReference({ mainUrl, referenceUrl: "https://anthropic.com/claude-code", page }),
+    isLowSignalMarketingReference({
+      mainUrl,
+      referenceUrl: "https://anthropic.com/claude-code",
+      page,
+    }),
     "expected known Claude Code landing final URL skipped after fetch",
   );
   assert(
-    isLowSignalMarketingReference({ mainUrl, referenceUrl: "https://claude.com/product/claude-code", page }),
+    isLowSignalMarketingReference({
+      mainUrl,
+      referenceUrl: "https://claude.com/product/claude-code",
+      page,
+    }),
     "expected current Claude Code product landing final URL skipped after fetch",
   );
   assert(
-    !isLowSignalMarketingReference({ mainUrl, referenceUrl: "https://claude.com/blog/using-claude-code", page }),
+    !isLowSignalMarketingReference({
+      mainUrl,
+      referenceUrl: "https://claude.com/blog/using-claude-code",
+      page,
+    }),
     "expected arbitrary source-like deep paths to remain bundle candidates",
   );
 }
@@ -989,24 +1447,62 @@ async function testKnownProductHomepageReferencesAreSkippedBeforeNetworkFetch() 
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${origin}/main`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
         assert(
-          result.stderr.includes("Skipping low-signal reference https://bolt.new/"),
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
+        assert(
+          result.stderr.includes(
+            "Skipping low-signal reference https://bolt.new/",
+          ),
           "expected skip message on stderr",
         );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("[Bolt homepage](https://bolt.new/)"), "expected skipped homepage link to remain external");
-        assert(index.includes("[Local docs](references/local-docs.md)"), "expected docs link localized");
-        assert(!index.includes("- [Bolt homepage]("), "expected skipped homepage omitted from Direct References");
-        assert(index.includes("- [Local Docs](references/local-docs.md)"), "expected docs in Direct References");
+        assert(
+          index.includes("[Bolt homepage](https://bolt.new/)"),
+          "expected skipped homepage link to remain external",
+        );
+        assert(
+          index.includes("[Local docs](references/local-docs.md)"),
+          "expected docs link localized",
+        );
+        assert(
+          !index.includes("- [Bolt homepage]("),
+          "expected skipped homepage omitted from Direct References",
+        );
+        assert(
+          index.includes("- [Local Docs](references/local-docs.md)"),
+          "expected docs in Direct References",
+        );
 
-        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
-        assert(manifest["references/local-docs.md"].original_url === `${origin}/docs`, "expected docs manifest entry");
-        assert(manifest.skipped?.["https://bolt.new/"], "expected skipped known homepage manifest entry");
-        assert(manifest.skipped["https://bolt.new/"].label === "Bolt homepage", "expected skipped label retained");
-        assert(!("title" in manifest.skipped["https://bolt.new/"]), "expected pre-fetch skipped entry not to invent title");
-        assert(!("content_type" in manifest.skipped["https://bolt.new/"]), "expected pre-fetch skipped entry not to invent content type");
+        const manifest = JSON.parse(
+          await readFile(
+            path.join(outDir, "references", "references.json"),
+            "utf8",
+          ),
+        );
+        assert(
+          manifest["references/local-docs.md"].original_url ===
+            `${origin}/docs`,
+          "expected docs manifest entry",
+        );
+        assert(
+          manifest.skipped?.["https://bolt.new/"],
+          "expected skipped known homepage manifest entry",
+        );
+        assert(
+          manifest.skipped["https://bolt.new/"].label === "Bolt homepage",
+          "expected skipped label retained",
+        );
+        assert(
+          !("title" in manifest.skipped["https://bolt.new/"]),
+          "expected pre-fetch skipped entry not to invent title",
+        );
+        assert(
+          !("content_type" in manifest.skipped["https://bolt.new/"]),
+          "expected pre-fetch skipped entry not to invent content type",
+        );
       });
     },
   );
@@ -1039,16 +1535,40 @@ async function testArticleProseWithMarketingTermsStillBundles() {
       await withTempDir(async (dir) => {
         const outDir = path.join(dir, "bundle");
         const result = await runCli([`${sourceOrigin}/main`, outDir]);
-        assert(result.code === 0, `expected CLI success, got ${result.code}: ${result.stderr}`);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
 
         const index = await readFile(path.join(outDir, "index.md"), "utf8");
-        assert(index.includes("[Market analysis](references/market-analysis.md)"), "expected article link localized");
-        const reference = await readFile(path.join(outDir, "references", "market-analysis.md"), "utf8");
-        assert(reference.includes("compares pricing, customers, testimonials"), "expected article prose bundled");
+        assert(
+          index.includes("[Market analysis](references/market-analysis.md)"),
+          "expected article link localized",
+        );
+        const reference = await readFile(
+          path.join(outDir, "references", "market-analysis.md"),
+          "utf8",
+        );
+        assert(
+          reference.includes("compares pricing, customers, testimonials"),
+          "expected article prose bundled",
+        );
 
-        const manifest = JSON.parse(await readFile(path.join(outDir, "references", "references.json"), "utf8"));
-        assert(manifest["references/market-analysis.md"].original_url === `${referenceOrigin}/analysis`, "expected article manifest entry");
-        assert(!manifest.skipped, "expected no skipped manifest for article prose false positive");
+        const manifest = JSON.parse(
+          await readFile(
+            path.join(outDir, "references", "references.json"),
+            "utf8",
+          ),
+        );
+        assert(
+          manifest["references/market-analysis.md"].original_url ===
+            `${referenceOrigin}/analysis`,
+          "expected article manifest entry",
+        );
+        assert(
+          !manifest.skipped,
+          "expected no skipped manifest for article prose false positive",
+        );
       });
     },
   );
@@ -1057,8 +1577,6 @@ async function testArticleProseWithMarketingTermsStillBundles() {
 async function testSiteRulesStripKnownChrome() {
   // Site rules key on hostname, which the localhost test server cannot present,
   // so exercise the pure clean() functions directly via the built module.
-  const { applySiteRules, stripGenericChrome } = await import(path.resolve(repoRoot, "dist/cli.js"));
-
   const arxiv = `<div class="subheader"><h1>Computer Science > Artificial Intelligence</h1></div>
 <div class="header-breadcrumbs-mobile"><strong>arXiv:2504.12516</strong></div>
 <div id="abs">
@@ -1073,12 +1591,24 @@ async function testSiteRulesStripKnownChrome() {
 <div id='labstabs'><h1>Bibliographic and Citation Tools</h1></div>`;
   const a = applySiteRules(arxiv, "https://arxiv.org/abs/2504.12516");
   assert(a.includes("We propose X."), "arxiv: expected abstract kept");
-  assert(!a.includes("Computer Science > Artificial Intelligence"), "arxiv: expected subject banner removed");
-  assert(!a.includes("Current browse context"), "arxiv: expected browse context removed");
+  assert(
+    !a.includes("Computer Science > Artificial Intelligence"),
+    "arxiv: expected subject banner removed",
+  );
+  assert(
+    !a.includes("Current browse context"),
+    "arxiv: expected browse context removed",
+  );
   assert(!a.includes("NASA ADS"), "arxiv: expected citation tail cut");
-  assert(!a.includes("BibTeX formatted citation"), "arxiv: expected bibtex modal removed");
+  assert(
+    !a.includes("BibTeX formatted citation"),
+    "arxiv: expected bibtex modal removed",
+  );
   assert(!a.includes("Bookmark"), "arxiv: expected bookmark block removed");
-  assert(!a.includes("Bibliographic and Citation Tools"), "arxiv: expected labs block removed");
+  assert(
+    !a.includes("Bibliographic and Citation Tools"),
+    "arxiv: expected labs block removed",
+  );
 
   const wiki = `<div id="mw-content-text"><div class="mw-content-ltr mw-parser-output">
 <div class="mw-subjectpageheader"></div>
@@ -1088,17 +1618,26 @@ async function testSiteRulesStripKnownChrome() {
 <div class="mw-heading mw-heading2"><h2 id="References">References</h2><span class="mw-editsection">[edit]</span></div>
 <div class="reflist"><ol><li>Reason 1990</li></ol></div>
 </div><noscript></noscript><div class="printfooter">Retrieved from</div><div id="catlinks">Categories</div>`;
-  const w = applySiteRules(wiki, "https://en.wikipedia.org/wiki/Swiss_cheese_model");
+  const w = applySiteRules(
+    wiki,
+    "https://en.wikipedia.org/wiki/Swiss_cheese_model",
+  );
   assert(w.includes("overlap"), "wikipedia: expected prose kept");
   assert(!w.includes("Reason 1990"), "wikipedia: expected reflist removed");
-  assert(!w.includes("Retrieved from"), "wikipedia: expected print footer removed");
+  assert(
+    !w.includes("Retrieved from"),
+    "wikipedia: expected print footer removed",
+  );
   assert(!w.includes("Categories"), "wikipedia: expected catlinks removed");
 
   const gh = `<body><nav>file tree src/ tests/</nav><div class="Languages">Python 80.1%</div>
 <article class="markdown-body"><h1>repo</h1><p>A benchmark.</p></article><div>star fork watch</div></body>`;
   const g = applySiteRules(gh, "https://github.com/sierra-research/tau2-bench");
   assert(g.includes("A benchmark."), "github: expected README kept");
-  assert(!g.includes("file tree") && !g.includes("Python 80.1%"), "github: expected repo chrome dropped");
+  assert(
+    !g.includes("file tree") && !g.includes("Python 80.1%"),
+    "github: expected repo chrome dropped",
+  );
 
   const bolt = `<html><head><title>Bolt AI builder: Websites, apps &amp; prototypes</title></head><body>
 <header><nav><a href="/pricing">Pricing</a><a href="https://discord.com/invite/stackblitz">Community</a></nav></header>
@@ -1115,17 +1654,46 @@ async function testSiteRulesStripKnownChrome() {
 <footer><a href="/terms">Terms</a></footer></body></html>`;
   const b = stripGenericChrome(applySiteRules(bolt, "https://bolt.new/"));
   assert(b.includes("What will you"), "bolt.new: expected hero kept");
-  assert(b.includes("Create stunning apps"), "bolt.new: expected short product description kept");
-  assert(b.includes("Let&#x27;s build"), "bolt.new: expected prompt placeholder kept");
-  assert(!b.includes("Your company"), "bolt.new: expected design-system marketing section removed");
-  assert(!b.includes("Learn more"), "bolt.new: expected marketing link removed");
-  assert(!b.includes("The #1 professional"), "bolt.new: expected trust marketing section removed");
-  assert(!b.includes("Pricing") && !b.includes("Community") && !b.includes("Terms"), "bolt.new: expected nav/footer chrome removed");
-  assert(!b.includes("Build now") && !b.includes("Get started"), "bolt.new: expected button CTA text removed");
-  assert(!b.includes("or import from") && !b.includes("Figma") && !b.includes("GitHub"), "bolt.new: expected orphaned import UI removed");
+  assert(
+    b.includes("Create stunning apps"),
+    "bolt.new: expected short product description kept",
+  );
+  assert(
+    b.includes("Let&#x27;s build"),
+    "bolt.new: expected prompt placeholder kept",
+  );
+  assert(
+    !b.includes("Your company"),
+    "bolt.new: expected design-system marketing section removed",
+  );
+  assert(
+    !b.includes("Learn more"),
+    "bolt.new: expected marketing link removed",
+  );
+  assert(
+    !b.includes("The #1 professional"),
+    "bolt.new: expected trust marketing section removed",
+  );
+  assert(
+    !b.includes("Pricing") && !b.includes("Community") && !b.includes("Terms"),
+    "bolt.new: expected nav/footer chrome removed",
+  );
+  assert(
+    !b.includes("Build now") && !b.includes("Get started"),
+    "bolt.new: expected button CTA text removed",
+  );
+  assert(
+    !b.includes("or import from") &&
+      !b.includes("Figma") &&
+      !b.includes("GitHub"),
+    "bolt.new: expected orphaned import UI removed",
+  );
 
   const untouched = "<html><body><p>plain</p></body></html>";
-  assert(applySiteRules(untouched, "https://example.com/x") === untouched, "non-match host: expected untouched");
+  assert(
+    applySiteRules(untouched, "https://example.com/x") === untouched,
+    "non-match host: expected untouched",
+  );
 }
 
 const tests = [

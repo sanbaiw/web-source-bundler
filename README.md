@@ -60,7 +60,8 @@ zero-config cleanup:
 ### Site rules
 
 Some boilerplate is site-specific. A small built-in registry (`SITE_RULES` in
-`src/cli.mjs`) ships default cleaners that run with no configuration:
+`src/bundle-core/page-extraction.ts`) ships default cleaners that run with no
+configuration:
 
 - **arXiv** — keeps the abstract, cuts the "References & Citations" tool/footer tail.
 - **Wikipedia** — drops the reference list, navboxes, `[edit]` markers, and category footer.
@@ -84,8 +85,7 @@ This repo uses Bun for dependency management, building, and tests.
 
 ```bash
 bun install
-bun run build
-bun run test
+bun run check
 ```
 
 The published package is `@sanbaiw/web-source-bundler` and exposes one CLI bin:
