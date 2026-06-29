@@ -28,7 +28,7 @@
     "format": "biome check . --write --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
     "format:check": "biome check . --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
-    "test": "bun run build && bun ./test/preserved-source-ingest.test.mjs",
+    "test": "bun run build && bun ./test/run-tests.ts",
     "pack:check": "bun run check && bun pm pack --dry-run"
   },
   "engines": {

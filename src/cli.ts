@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { buildBundle } from "./bundle-core/build-bundle";
 
-const CLI_VERSION = "0.1.0";
+const CLI_VERSION = "0.1.1";
 
 function usage(exitCode = 1): never {
   const text = `Usage:
