@@ -9,6 +9,7 @@ tmp/
 # Local planning and agent runtime files.
 .scratch/
 .worktrees/
+docs
 AGENTS.md
 RTK.md
 CONTEXT.md
