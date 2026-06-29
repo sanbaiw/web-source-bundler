@@ -7,6 +7,7 @@ import { gfm } from "turndown-plugin-gfm";
 import { replaceImagesWithLocalPaths } from "./assets";
 import { cleanHtml, stripLeadingBodyH1 } from "./page-extraction";
 import {
+  documentUrlKey,
   fallbackTitleFromUrl,
   normalizeUrl,
   relativePosix,
@@ -33,11 +34,19 @@ function buildReferenceSection(
   }
 
   const lines = ["## Direct References", ""];
+  const seenTargets = new Set<string>();
   for (const referenceUrl of page.directReferences) {
-    const info = pageInfoMap.get(referenceUrl);
-    const localTarget = linkMap.get(referenceUrl);
+    const info =
+      pageInfoMap.get(referenceUrl) ||
+      pageInfoMap.get(documentUrlKey(referenceUrl));
+    const localTarget =
+      linkMap.get(referenceUrl) || linkMap.get(documentUrlKey(referenceUrl));
     const label = info?.title || referenceUrl;
     if (localTarget) {
+      if (seenTargets.has(localTarget)) {
+        continue;
+      }
+      seenTargets.add(localTarget);
       lines.push(`- [${label}](${localTarget})`);
     }
   }
@@ -215,7 +224,8 @@ function replaceAnchorsWithLocalLinks(
         return full;
       }
 
-      const localTarget = linkMap.get(absolute);
+      const localTarget =
+        linkMap.get(absolute) || linkMap.get(documentUrlKey(absolute));
       if (!localTarget) {
         if (/^(?:#|mailto:|tel:|javascript:)/i.test(href)) {
           return full;

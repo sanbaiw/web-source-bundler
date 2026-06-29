@@ -187,12 +187,21 @@ export interface FailedDirectReferenceOutcome {
   failReason: string;
 }
 
+export interface AliasDirectReferenceOutcome {
+  kind: "alias";
+  link: DirectReferenceLink;
+  source: FetchedSource;
+  title: string;
+  relativePath: string;
+}
+
 export type DirectReferenceOutcome =
   | HtmlDirectReferenceOutcome
   | TextDirectReferenceOutcome
   | AssetDirectReferenceOutcome
   | FailedDirectReferenceOutcome
-  | SkippedDirectReferenceOutcome;
+  | SkippedDirectReferenceOutcome
+  | AliasDirectReferenceOutcome;
 
 export type DirectReferencePlan =
   | { kind: "fetch"; link: DirectReferenceLink }
@@ -206,6 +215,7 @@ export interface ReferenceManifestEntry {
   final_url?: string;
   asset_path?: string;
   fail_reason?: string;
+  additional_original_urls?: string[];
 }
 
 export interface SkippedReferenceManifestEntry {

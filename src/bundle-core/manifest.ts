@@ -34,6 +34,16 @@ export function writeReferenceManifest(
       continue;
     }
 
+    if (outcome.kind === "alias") {
+      const entry = manifestEntries[outcome.relativePath];
+      if (entry && outcome.link.url !== entry.original_url) {
+        const aliases = new Set(entry.additional_original_urls || []);
+        aliases.add(outcome.link.url);
+        entry.additional_original_urls = [...aliases];
+      }
+      continue;
+    }
+
     if (outcome.kind === "failed") {
       manifestEntries[outcome.relativePath] = {
         original_url: outcome.link.url,

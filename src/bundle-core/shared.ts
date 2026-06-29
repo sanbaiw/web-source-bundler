@@ -92,6 +92,16 @@ export function normalizeUrl(
   }
 }
 
+export function documentUrlKey(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 function toPosix(filePath: string): string {
   return filePath.split(path.sep).join(path.posix.sep);
 }

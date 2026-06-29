@@ -22,6 +22,7 @@ import {
   renderTextSourceEntry,
 } from "./rendering";
 import {
+  documentUrlKey,
   ensureDir,
   fallbackTitleFromUrl,
   relativePosix,
@@ -175,7 +176,7 @@ function createReferencePageFromOutcome(
   outcome: DirectReferenceOutcome,
   outputDir: string,
 ): BundlePage | null {
-  if (outcome.kind === "skipped") {
+  if (outcome.kind === "skipped" || outcome.kind === "alias") {
     return null;
   }
 
@@ -228,21 +229,39 @@ function addPageMapEntries(
   map: Map<string, BundlePage>,
   page: BundlePage,
 ): void {
-  map.set(page.url, page);
+  addPageMapEntry(map, page.url, page);
   if (page.source) {
-    map.set(page.source.requestedUrl, page);
-    map.set(page.source.fetchedUrl, page);
-    map.set(page.source.finalUrl, page);
+    addPageMapEntry(map, page.source.requestedUrl, page);
+    addPageMapEntry(map, page.source.fetchedUrl, page);
+    addPageMapEntry(map, page.source.finalUrl, page);
   }
 }
 
 function addLinkMapEntries(map: Map<string, string>, page: BundlePage): void {
-  map.set(page.url, page.relativePath);
+  addLinkMapEntry(map, page.url, page.relativePath);
   if (page.source) {
-    map.set(page.source.requestedUrl, page.relativePath);
-    map.set(page.source.fetchedUrl, page.relativePath);
-    map.set(page.source.finalUrl, page.relativePath);
+    addLinkMapEntry(map, page.source.requestedUrl, page.relativePath);
+    addLinkMapEntry(map, page.source.fetchedUrl, page.relativePath);
+    addLinkMapEntry(map, page.source.finalUrl, page.relativePath);
   }
+}
+
+function addPageMapEntry(
+  map: Map<string, BundlePage>,
+  url: string,
+  page: BundlePage,
+): void {
+  map.set(url, page);
+  map.set(documentUrlKey(url), page);
+}
+
+function addLinkMapEntry(
+  map: Map<string, string>,
+  url: string,
+  relativePath: string,
+): void {
+  map.set(url, relativePath);
+  map.set(documentUrlKey(url), relativePath);
 }
 
 export async function buildBundle(
@@ -279,6 +298,8 @@ export async function buildBundle(
   const directReferencePipeline = createDirectReferencePipeline(mainPage.url);
   const referenceOutcomes: DirectReferenceOutcome[] = [];
   const referencePages: BundlePage[] = [];
+  const referenceAliases = new Map<string, BundlePage>();
+  const emittedReferencesByDocumentUrl = new Map<string, BundlePage>();
 
   let referenceIndex = 1;
   for (const link of mainPage.directReferenceLinks) {
@@ -316,10 +337,35 @@ export async function buildBundle(
       if (outcome.kind === "skipped") {
         console.error(`Skipping low-signal reference ${link.url} ...`);
       }
-      referenceOutcomes.push(outcome);
       const page = createReferencePageFromOutcome(outcome, outputDir);
+      let recordOutcome = true;
       if (page) {
-        referencePages.push(page);
+        if (page.source) {
+          const documentKey = documentUrlKey(page.source.finalUrl);
+          const existingPage = emittedReferencesByDocumentUrl.get(documentKey);
+          if (existingPage) {
+            recordOutcome = false;
+            referenceAliases.set(link.url, existingPage);
+            referenceAliases.set(page.source.requestedUrl, existingPage);
+            referenceAliases.set(page.source.fetchedUrl, existingPage);
+            referenceAliases.set(page.source.finalUrl, existingPage);
+            referenceOutcomes.push({
+              kind: "alias",
+              link,
+              source: page.source,
+              title: page.title,
+              relativePath: existingPage.relativePath,
+            });
+          } else {
+            emittedReferencesByDocumentUrl.set(documentKey, page);
+            referencePages.push(page);
+          }
+        } else {
+          referencePages.push(page);
+        }
+      }
+      if (recordOutcome) {
+        referenceOutcomes.push(outcome);
       }
     } catch (error) {
       const outcome = directReferencePipeline.resolveFailure(link, error);
@@ -340,6 +386,10 @@ export async function buildBundle(
   for (const page of allPages) {
     addPageMapEntries(pageInfoMap, page);
     addLinkMapEntries(linkMap, page);
+  }
+  for (const [aliasUrl, page] of referenceAliases) {
+    addPageMapEntry(pageInfoMap, aliasUrl, page);
+    addLinkMapEntry(linkMap, aliasUrl, page.relativePath);
   }
 
   const pageImageMaps = new Map<

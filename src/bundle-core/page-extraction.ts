@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   absoluteUrlForAsset,
   decodeHtml,
+  documentUrlKey,
   normalizeUrl,
   sanitizeBaseName,
   stripTags,
@@ -356,7 +357,8 @@ function extractLinkEntries(
     }
 
     const label = readableLinkLabel(match[2] || "");
-    const existing = byUrl.get(url);
+    const key = documentUrlKey(url);
+    const existing = byUrl.get(key);
     if (existing) {
       if (!existing.label && label) {
         existing.label = label;
@@ -365,7 +367,7 @@ function extractLinkEntries(
     }
 
     const entry = label ? { url, label } : { url };
-    byUrl.set(url, entry);
+    byUrl.set(key, entry);
     references.push(entry);
   }
 

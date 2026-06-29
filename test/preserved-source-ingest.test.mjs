@@ -997,6 +997,99 @@ async function testDirectReferencesOnlyOnMainPage() {
   }
 }
 
+async function testFragmentAndDocumentReferenceUrlsShareOnePage() {
+  const mainHtml = `<!doctype html><html><head><title>Main Source</title></head>
+<body><main><article>
+<h1>Main Source</h1>
+<p><a href="/reference#section">Reference section</a></p>
+<p><a href="/reference">Reference root</a></p>
+</article></main></body></html>`;
+  const refHtml = `<!doctype html><html><head><title>Reference Doc</title></head>
+<body><main><article><h1>Reference Doc</h1><p>reference body</p></article></main></body></html>`;
+
+  await withServer(
+    {
+      "/main": {
+        contentType: "text/html; charset=utf-8",
+        body: mainHtml,
+      },
+      "/reference": {
+        contentType: "text/html; charset=utf-8",
+        body: refHtml,
+      },
+    },
+    async (origin) => {
+      await withTempDir(async (dir) => {
+        const outDir = path.join(dir, "bundle");
+        const result = await runCli([`${origin}/main`, outDir]);
+        assert(
+          result.code === 0,
+          `expected CLI success, got ${result.code}: ${result.stderr}`,
+        );
+
+        const referenceFetches = (
+          result.stderr.match(/Fetching reference source/g) || []
+        ).length;
+        assert(
+          referenceFetches === 1,
+          `expected one reference fetch after document-key dedup, got ${referenceFetches}: ${result.stderr}`,
+        );
+
+        const referenceFiles = (
+          await readdir(path.join(outDir, "references"))
+        ).filter((file) => file.endsWith(".md"));
+        assert(
+          referenceFiles.length === 1,
+          `expected one readable reference page, got ${referenceFiles.join(", ")}`,
+        );
+        assert(
+          referenceFiles[0] === "reference-doc.md",
+          `expected stable reference page name, got ${referenceFiles[0]}`,
+        );
+
+        const index = await readFile(path.join(outDir, "index.md"), "utf8");
+        const directReferenceLines = index
+          .split("\n")
+          .filter(
+            (line) => line === "- [Reference Doc](references/reference-doc.md)",
+          );
+        assert(
+          directReferenceLines.length === 1,
+          `expected one Direct References entry for the shared page, got ${directReferenceLines.length}`,
+        );
+        assert(
+          index.includes("[Reference section](references/reference-doc.md)"),
+          "expected fragment link to point at the shared local reference",
+        );
+        assert(
+          index.includes("[Reference root](references/reference-doc.md)"),
+          "expected document link to point at the shared local reference",
+        );
+        assert(
+          !index.includes("reference-doc-2.md"),
+          "expected no duplicate reference slug in main page",
+        );
+
+        const manifest = JSON.parse(
+          await readFile(
+            path.join(outDir, "references/references.json"),
+            "utf8",
+          ),
+        );
+        assert(
+          manifest["references/reference-doc.md"].original_url ===
+            `${origin}/reference#section`,
+          "expected manifest to preserve the first discovered original URL",
+        );
+        assert(
+          !manifest["references/reference-doc-2.md"],
+          "expected manifest not to contain a duplicate reference entry",
+        );
+      });
+    },
+  );
+}
+
 async function testUnlocalizedRelativeLinksAreAbsolutized() {
   const refHtml = `<!doctype html>
 <html><head><title>Reference One</title></head>
@@ -1713,6 +1806,7 @@ const tests = [
   testEmptyAltImagesRemainValidMarkdownImages,
   testFailureStubOmitsCurlProgressNoise,
   testDirectReferencesOnlyOnMainPage,
+  testFragmentAndDocumentReferenceUrlsShareOnePage,
   testUnlocalizedRelativeLinksAreAbsolutized,
   testStructuralChromeLinksAreNotBundledAsReferences,
   testLowSignalMarketingReferencesAreSkippedAfterFetch,
