@@ -1,6 +1,6 @@
 {
   "name": "@sanbaiw/web-source-bundler",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Fetch, preserve, and bundle web sources into Markdown entries with local references and assets.",
   "type": "module",
   "repository": {
@@ -28,8 +28,7 @@
     "format": "biome check . --write --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
     "format:check": "biome check . --javascript-linter-enabled=false --json-linter-enabled=false --javascript-assists-enabled=false --json-assists-enabled=false",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
-    "test": "bun run build && bun ./test/run-tests.ts",
-    "pack:check": "bun run check && bun pm pack --dry-run"
+    "test": "bun run build && bun ./test/run-tests.ts"
   },
   "engines": {
     "node": ">=22"
